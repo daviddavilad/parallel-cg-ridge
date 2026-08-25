@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+data/
+results/
+*.npy
+*.npz
+report/*.aux
+report/*.log
+report/*.out
+report/*.synctex.gz

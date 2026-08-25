@@ -1,0 +1,28 @@
+[project]
+name = "parallel-cg-ridge"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "David Davila", email = "daviddavilacorraliza@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mpi4py>=4.1.2",
+    "numpy>=2.5.2",
+    "scipy>=1.18.1",
+]
+
+[project.scripts]
+parallel-cg-ridge = "parallel_cg_ridge:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.4",
+]
