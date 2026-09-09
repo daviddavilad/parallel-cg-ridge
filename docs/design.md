@@ -45,6 +45,12 @@ Per iteration:
 
 At small `P` compute dominates and scaling looks close to ideal. As `P` grows, the shrinking compute and growing reduction cost cross over, and parallel efficiency degrades.
 
+### Interpreting the scaling curve
+
+Plotting runtime against rank count produces a U-shaped curve: time falls while the shrinking `O(nd/P)` compute dominates, reaches a minimum, then rises as the growing `O(log P)` reduction takes over. The minimum locates the crossover.
+
+The minimum is not necessarily the operating point of interest. Near it, large increases in `P` buy small reductions in time, so parallel efficiency is poor. The practically useful point is often the *knee* (where the curve begins to flatten), which captures most of the available speedup at substantially better efficiency. Both are worth analyzing: the time-optimal configuration and the efficiency-optimal one answer different questions depending on the practical application.
+
 ## Pipelined CG, not s-step
 
 Both reduce communication cost, but in different ways, and only pipelined CG fits this problem.

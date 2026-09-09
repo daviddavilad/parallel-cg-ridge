@@ -87,11 +87,14 @@ In development, Fall 2026. Current state: project scaffolding.
  
 Planned deliverables:
  
-- [ ] Serial matrix-free CG, verified against a direct solve of the normal equations
+- [x] Serial matrix-free CG, verified against a direct solve of the normal equations
 - [ ] Distributed MPI CG with consistent results across rank counts
 - [ ] Strong- and weak-scaling studies with a compute-vs-communication timing breakdown
+- [ ] Runtime-vs-rank-count curve locating the communication crossover, reporting both the time-optimal minimum and the efficiency-optimal knee
 - [ ] Standard vs. pipelined CG comparison
 - [ ] Analysis of λ, conditioning, and CG iteration count
+
+Possible extensions: MPI + CUDA hybrid (after all deliverables done); randomized sketching as a preconditioner for the ridge system; Newton-CG for logistic regression.
 
 ## References
 
