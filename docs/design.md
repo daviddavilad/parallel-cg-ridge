@@ -45,6 +45,12 @@ Per iteration:
 
 At small `P` compute dominates and scaling looks close to ideal. As `P` grows, the shrinking compute and growing reduction cost cross over, and parallel efficiency degrades.
 
+### Sizing the scaling experiments
+
+The correctness runs used `n = 500`, `d = 20`, and terminated in exactly 20 iterations at every rank count, not because the tolerance was met, but because CG's finite-termination property bounds it at `d` steps in exact arithmetic.
+
+This matters for experiment design. When iteration count is pinned by finite termination, it cannot vary with rank count, so the reordering effects of the `Allreduce` never reach the stopping test. The scaling runs need `d` large enough that CG stops on tolerance well before exhausting the Krylov space, otherwise the timing regime being measured is not the one the cost model describes.
+
 ### Interpreting the scaling curve
 
 Plotting runtime against rank count produces a U-shaped curve: time falls while the shrinking `O(nd/P)` compute dominates, reaches a minimum, then rises as the growing `O(log P)` reduction takes over. The minimum locates the crossover.
