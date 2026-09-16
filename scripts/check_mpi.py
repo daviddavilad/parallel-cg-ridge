@@ -42,9 +42,9 @@ print(
 )
 
 # Distributed operator and distributed RHS
-apply_A_dist = make_distributed_ridge_operator(
-    X_local,
-    lam,
+apply_A_dist, timings = make_distributed_ridge_operator(
+    X_local, 
+    lam, 
     comm,
 )
 
@@ -92,3 +92,6 @@ if rank == 0:
     )
     print("distributed residual:", res_dist)
     print("serial residual:", res_serial)
+    print("compute time:", timings["compute"])
+    print("comm time:", timings["comm"])
+    print("operator calls:", timings["calls"])

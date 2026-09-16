@@ -21,13 +21,22 @@ def make_distributed_ridge_operator(X_local, lam, comm):
     d = X_local.shape[1]
     recvbuf = np.empty(d)          # preallocated, reused every iteration
 
+    timings = {"compute": 0.0, "comm": 0.0, "calls": 0}
+
     def apply_A(p):
+        t0 = MPI.Wtime()
         u = X_local @ p                     # local, no communication
         partial = X_local.T @ u             # local partial d-vector
+        timings["compute"] += MPI.Wtime() - t0
+        timings["calls"] += 1
+
+        t0 = MPI.Wtime()
         comm.Allreduce(partial, recvbuf, op=MPI.SUM)
+        timings["comm"] += MPI.Wtime() - t0
+
         return recvbuf + lam * p
 
-    return apply_A
+    return apply_A, timings
 
 def assemble_rhs(X_local, y_local, comm):
     partial = X_local.T @ y_local
