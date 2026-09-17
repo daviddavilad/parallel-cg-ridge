@@ -93,3 +93,9 @@ A real dataset will be used and implemented for validation.
 
 - Use the uppercase `mpi4py` buffer API (`Allreduce`, `Iallreduce`) on NumPy arrays. The lowercase pickle-based calls are far slower and would corrupt timings.
 - Timers must separate local compute from communication, so the crossover can be identified directly rather than inferred from the runtime.
+
+### BLAS thread oversubscription
+
+Timing runs must pin BLAS to one thread per MPI rank (`OMP_NUM_THREADS=1`). NumPy's OpenBLAS backend otherwise sizes its thread pool for the whole machine independently in every rank, so `P` ranks each spawn a full-machine pool and the node is massively oversubscribed.
+
+Measured on the desktop at `n = 100000`, `d = 200`, `P = 4`: unpinned wall time 6.77 s versus 0.62 s pinned, a 10.8x penalty. The damage appears mostly in the communication column (3.56 s versus 0.075 s) because a rank cannot enter the reduction until its local compute finishes, so descheduled threads show up as arrival skew rather than as compute time. This is a useful reminder that measured `Allreduce` time includes load-imbalance skew, not only network cost.
