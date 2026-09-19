@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+#SBATCH --job-name=cg-strong-scaling
+#SBATCH --partition=general
+#SBATCH --nodes=1
+#SBATCH --ntasks=32
+#SBATCH --time=01:00:00
+#SBATCH --output=logs/strong_scaling_%j.out
+
+module load python/3.13.0-xnav openmpi/4.1.6-2tgn
+source .venv/bin/activate
 set -euo pipefail
 
 N=${1:-500000}
