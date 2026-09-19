@@ -99,3 +99,31 @@ A real dataset will be used and implemented for validation.
 Timing runs must pin BLAS to one thread per MPI rank (`OMP_NUM_THREADS=1`). NumPy's OpenBLAS backend otherwise sizes its thread pool for the whole machine independently in every rank, so `P` ranks each spawn a full-machine pool and the node is massively oversubscribed.
 
 Measured on the desktop at `n = 100000`, `d = 200`, `P = 4`: unpinned wall time 6.77 s versus 0.62 s pinned, a 10.8x penalty. The damage appears mostly in the communication column (3.56 s versus 0.075 s) because a rank cannot enter the reduction until its local compute finishes, so descheduled threads show up as arrival skew rather than as compute time. This is a useful reminder that measured `Allreduce` time includes load-imbalance skew, not only network cost.
+
+### First strong-scaling results (desktop)
+
+`n = 100000`, `d = 200`, `lam = 1e-3`, 5 repetitions, one BLAS thread per rank. CPU: AMD Ryzen 7 8700F, 8 physical cores, 2 threads per core.
+
+| P | wall (s) | compute (s) | comm (s) | efficiency |
+|---|---|---|---|---|
+| 1 | 1.456 | 1.451 | 0.002 | 1.00 |
+| 2 | 0.830 | 0.820 | 0.011 | 0.88 |
+| 4 | 0.587 | 0.564 | 0.053 | 0.62 |
+| 8 | 0.553 | 0.497 | 0.092 | 0.33 |
+| 16 | 0.937 | 0.494 | 0.519 | 0.10 |
+
+Note: efficiency is measured as
+
+$$
+E(P) = \frac{T(1)}{P \cdot T(P)}.
+$$
+
+The predicted U-shape appears, with the runtime minimum at `P = 8`. The knee is at `P = 4`: moving from 4 to 8 ranks reduces wall time by 6% while halving parallel efficiency, so `P = 4` is the better operating point. Its efficiency of 0.62 falls in the 50-60% range suggested as a practical target.
+
+Two results that contradict the cost model:
+
+**Local compute does not scale as `1/P`.** Measured compute speedup saturates at about 2.9x and is essentially flat from `P = 8` to `P = 16`. The dense matrix-vector product loads 8 bytes per 2 flops, so it is memory-bandwidth bound, and all cores share one memory controller. The `1/P` term in the cost model holds only while the machine has spare bandwidth.
+
+**The `P = 16` point measures SMT contention, not scaling.** With 8 physical cores, `P = 16` places two ranks per core. Compute cannot improve, and the 5.6x jump in measured communication reflects hyperthread pairs arriving at the reduction at unpredictable times rather than any increase in network cost.
+
+Local sweeps should therefore be capped at `P = 8`. Whether the bandwidth plateau persists on distributed-memory hardware, where each node has its own memory controller, is a question for the work on CARC. To be developed further.
