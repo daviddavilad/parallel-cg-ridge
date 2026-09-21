@@ -10,8 +10,6 @@
 module load python/3.13.0-xnav openmpi/4.1.6-2tgn
 source .venv/bin/activate
 set -euo pipefail
-export OMPI_MCA_pml=ob1
-export OMPI_MCA_btl=self,vader
 
 N=${1:-500000}
 D=${2:-200}

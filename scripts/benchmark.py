@@ -7,7 +7,7 @@ from parallel_cg_ridge.cg import cg
 from parallel_cg_ridge.cg_mpi import (
     assemble_rhs,
     make_distributed_ridge_operator,
-    row_partition,
+    scatter_rows,
 )
 from parallel_cg_ridge.data import make_ridge_problem
 
@@ -24,11 +24,14 @@ parser.add_argument("--warmup", type=int, default=1)
 parser.add_argument("--reps", type=int, default=5)
 args = parser.parse_args()
 
-X, y, _ = make_ridge_problem(n=args.n, d=args.d, cond=args.cond, seed=0)
+if rank == 0:
+    X, y, _ = make_ridge_problem(n=args.n, d=args.d, cond=args.cond, seed=0)
+else:
+    X, y = None, None
 
-start, stop = row_partition(args.n, comm)
-X_local = X[start:stop]
-y_local = y[start:stop]
+X_local = scatter_rows(X, comm)
+y_local = scatter_rows(y, comm)
+del X, y
 
 apply_A, timings = make_distributed_ridge_operator(X_local, args.lam, comm)
 b = assemble_rhs(X_local, y_local, comm)
