@@ -31,6 +31,32 @@ def row_counts(n: int, size: int) -> tuple[np.ndarray, np.ndarray]:
     
     return counts, offsets
 
+def scatter_rows(A, comm, root=0):
+    """Distribute row blocks of A from root. A is ignored on non-root ranks."""
+    rank = comm.Get_rank()
+
+    if rank == root:
+        assert A.flags['C_CONTIGUOUS'] and A.dtype == np.float64
+        shape = A.shape
+    else:
+        shape = None
+
+    shape = comm.bcast(shape, root=root)
+    start, stop = row_partition(shape[0], comm)
+    local_shape = (stop - start,) + shape[1:]
+    row_elems = int(np.prod(shape[1:]))
+
+    if rank == root:
+        counts, offsets = row_counts(shape[0], comm.Get_size())
+        elem_counts = counts * row_elems
+        elem_offsets = offsets * row_elems
+
+    sendbuf = [A, elem_counts, elem_offsets, MPI.DOUBLE] if rank == root else None
+    local = np.empty(local_shape)
+    comm.Scatterv(sendbuf, local, root=root)
+
+    return local
+
 def make_distributed_ridge_operator(X_local, lam, comm):
     d = X_local.shape[1]
     recvbuf = np.empty(d)          # preallocated, reused every iteration
