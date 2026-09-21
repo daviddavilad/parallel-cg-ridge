@@ -17,6 +17,20 @@ def row_partition(n: int, comm) -> tuple[int, int]:
 
     return start, stop
 
+def row_counts(n: int, size: int) -> tuple[np.ndarray, np.ndarray]:
+    """Row counts and row offsets for every rank."""
+    base = n // size
+    remainder = n % size
+
+    counts = np.zeros(size, np.int64)
+    offsets = np.zeros(size, np.int64)
+
+    for rank in range(size):
+        counts[rank] = base + (1 if rank < remainder else 0)
+        offsets[rank] = rank * base + min(rank, remainder)
+    
+    return counts, offsets
+
 def make_distributed_ridge_operator(X_local, lam, comm):
     d = X_local.shape[1]
     recvbuf = np.empty(d)          # preallocated, reused every iteration
