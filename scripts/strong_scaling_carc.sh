@@ -10,7 +10,8 @@
 module load python/3.13.0-xnav openmpi/4.1.6-2tgn
 source .venv/bin/activate
 set -euo pipefail
-export UCX_TLS=^sysv
+export OMPI_MCA_pml=ob1
+export OMPI_MCA_btl=self,vader
 
 N=${1:-500000}
 D=${2:-200}
@@ -21,6 +22,6 @@ mkdir -p "$(dirname "$OUT")"
 
 for P in 1 2 4 8 16 32; do
   echo "running P=$P" >&2
-  OMP_NUM_THREADS=1 srun --mpi=pmi2 -n "$P" \
+  OMP_NUM_THREADS=1 timeout 600 srun --mpi=pmi2 -n "$P" \
     python scripts/benchmark.py --n "$N" --d "$D" --reps 5 >> "$OUT" || echo "P=$P failed" >&2
 done
