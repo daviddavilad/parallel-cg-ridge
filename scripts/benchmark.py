@@ -17,9 +17,12 @@ comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
 
+node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+local_rank = node_comm.Get_rank()
+
 cpus: list[int]
 if sys.platform == "linux":
-    os.sched_setaffinity(0, {rank})
+    os.sched_setaffinity(0, {local_rank})
     cpus = sorted(os.sched_getaffinity(0))
 else:
     cpus = []

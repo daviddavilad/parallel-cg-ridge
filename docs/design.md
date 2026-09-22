@@ -127,3 +127,13 @@ Two results that contradict the cost model:
 **The `P = 16` point measures SMT contention, not scaling.** With 8 physical cores, `P = 16` places two ranks per core. Compute cannot improve, and the 5.6x jump in measured communication reflects hyperthread pairs arriving at the reduction at unpredictable times rather than any increase in network cost.
 
 Local sweeps should therefore be capped at `P = 8`. Whether the bandwidth plateau persists on distributed-memory hardware, where each node has its own memory controller, is a question for the work on CARC. To be developed further.
+
+### Rank placement and measurement variance
+
+Early CARC runs gave bimodal timings at P=8 and P=16: each run landed on either a fast value or a slow one, with nothing in between. Per-rank timings showed that in the slow runs some ranks computed up to 2x slower than others, and that the faster ranks spent the difference waiting inside the `Allreduce`.
+
+The cause was rank placement. Hopper nodes have two sockets of 16 cores, each with its own memory controller. Unpinned ranks are placed by the kernel, and an uneven split across sockets leaves the crowded socket's ranks sharing less memory bandwidth - which this bandwidth-bound solver feels directly. The effect never appeared at P=32, where every core is used and the split is necessarily even.
+
+`srun --cpu-bind=cores` had no effect here; every rank still reported all 32 CPUs. Pinning explicitly with `os.sched_setaffinity(0, {rank})` worked. CPU numbering alternates between sockets, so pinning rank r to CPU r splits ranks evenly for any P. The pin happens before the data is scattered, so each rank's block is allocated in its own socket's memory.
+
+With pinning, per-rank compute varies by at most 6% and three independent runs agree within 2%. All reported timings use this configuration.
