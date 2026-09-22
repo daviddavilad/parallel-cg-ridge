@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 import json
 import os
+import sys
 
 from mpi4py import MPI
 from parallel_cg_ridge.cg import cg
@@ -15,6 +16,13 @@ from parallel_cg_ridge.data import make_ridge_problem
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
+
+cpus: list[int]
+if sys.platform == "linux":
+    os.sched_setaffinity(0, {rank})
+    cpus = sorted(os.sched_getaffinity(0))
+else:
+    cpus = []
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--n", type=int, default=100_000)
@@ -41,7 +49,6 @@ for _ in range(args.warmup):
     timings.update(compute=0.0, comm=0.0, calls=0)
     cg(apply_A, b, tol=1e-10, maxiter=10 * args.d)
 
-cpus = sorted(os.sched_getaffinity(0))
 cpus_per_rank = comm.gather(cpus, root=0)
 
 comm.Barrier()
