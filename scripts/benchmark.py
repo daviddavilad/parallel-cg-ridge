@@ -1,6 +1,7 @@
 import argparse
 import numpy as np
 import json
+import os
 
 from mpi4py import MPI
 from parallel_cg_ridge.cg import cg
@@ -40,6 +41,9 @@ for _ in range(args.warmup):
     timings.update(compute=0.0, comm=0.0, calls=0)
     cg(apply_A, b, tol=1e-10, maxiter=10 * args.d)
 
+cpus = sorted(os.sched_getaffinity(0))
+cpus_per_rank = comm.gather(cpus, root=0)
+
 comm.Barrier()
 
 records = []
@@ -53,15 +57,17 @@ for _ in range(args.reps):
     t1 = MPI.Wtime()
 
     wall = t1 - t0
-    wall_max = comm.reduce(wall, op=MPI.MAX, root=0)
-    comp_max = comm.reduce(timings["compute"], op=MPI.MAX, root=0)
-    comm_max = comm.reduce(timings["comm"], op=MPI.MAX, root=0)
+    walls = comm.gather(wall, root=0)
+    comps = comm.gather(timings["compute"], root=0)
+    comms = comm.gather(timings["comm"], root=0)
 
     if rank == 0:
         records.append({
-            "wall": wall_max,
-            "compute": comp_max,
-            "comm": comm_max,
+            "wall": max(walls),
+            "compute": max(comps),
+            "comm": max(comms),
+            "compute_per_rank": comps,
+            "comm_per_rank": comms,
             "iters": iters,
             "converged": converged,
         })
@@ -77,7 +83,10 @@ if rank == 0:
         "wall": float(np.median([r["wall"] for r in records])),
         "compute": float(np.median([r["compute"] for r in records])),
         "comm": float(np.median([r["comm"] for r in records])),
+        "compute_per_rank": np.median([r["compute_per_rank"] for r in records], axis=0).tolist(),
+        "comm_per_rank": np.median([r["comm_per_rank"] for r in records], axis=0).tolist(),
         "iters": records[0]["iters"],
         "converged": all(r["converged"] for r in records),
+        "cpus_per_rank": cpus_per_rank,
     }
     print(json.dumps(result))
