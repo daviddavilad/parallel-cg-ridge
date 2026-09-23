@@ -11,6 +11,7 @@ for path in paths:
 
     for r in rows:
         p, w = r["P"], r["wall"]
+        it = r["iters"]
 
         c = r.get("compute_per_rank")
         if c:
@@ -21,4 +22,5 @@ for path in paths:
         cpr = r.get("cpus_per_rank")
         cpus = [x[0] if x else None for x in cpr] if cpr else "—"
 
-        print(f"P={p:>2}  wall={w:.3f}  {stats}  cpus={cpus}")
+        n = r["n"]
+        print(f"n={n:>7}  P={p:>2}  iters={it:>3}  wall={w:.3f}  {stats}")
