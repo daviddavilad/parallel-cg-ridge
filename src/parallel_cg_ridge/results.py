@@ -37,3 +37,22 @@ def efficiency(rows: list[dict]) -> dict[int, list[tuple[int, float]]]:
         out[n] = sorted(pairs)
 
     return out
+
+def speedup(rows: list[dict]) -> dict[int, list[tuple[int, float]]]:
+    """Iteration-normalized parallel speedup, grouped by problem size."""
+    groups = group_by_size(rows)
+    out: dict[int, list[tuple[int, float]]] = {}
+
+    for n, group in groups.items():
+        baseline = next((r for r in group if r["P"] == 1), None)
+        if baseline is None:
+            continue
+
+        pairs = []
+        for r in group:
+            s = (baseline["wall"] / baseline["iters"]) / (r["wall"] / r["iters"])
+            pairs.append((r["P"], s))
+
+        out[n] = sorted(pairs)
+
+    return out
