@@ -78,6 +78,33 @@ def make_distributed_ridge_operator(X_local, lam, comm):
 
     return apply_A, timings
 
+def make_split_ridge_operator(X_local, lam, comm):
+    """Returns (start_A, finish_A). start_A launches the reduction; finish_A waits."""
+    d = X_local.shape[1]
+    recvbuf = np.empty(d)          # preallocated, reused every iteration
+
+    timings = {"compute": 0.0, "comm": 0.0, "calls": 0}
+    state = {"req": None, "partial": None}
+
+    def start_A(p):
+        assert state["req"] is None, "previous reduction not awaited"
+        t0 = MPI.Wtime()
+        u = X_local @ p
+        state["partial"] = X_local.T @ u
+        timings["compute"] += MPI.Wtime() - t0
+        timings["calls"] += 1
+
+        state["req"] = comm.Iallreduce(state["partial"], recvbuf, op=MPI.SUM)
+
+    def finish_A(p):
+        t0 = MPI.Wtime()
+        state["req"].Wait()
+        timings["comm"] += MPI.Wtime() - t0
+        state["req"] = None
+        return recvbuf + lam * p
+
+    return start_A, finish_A, timings
+
 def assemble_rhs(X_local, y_local, comm):
     partial = X_local.T @ y_local
     b = np.empty_like(partial)

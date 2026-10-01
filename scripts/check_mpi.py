@@ -6,6 +6,7 @@ from parallel_cg_ridge.cg_mpi import (
     assemble_rhs,
     make_distributed_ridge_operator,
     row_partition,
+    make_split_ridge_operator,
 )
 from parallel_cg_ridge.data import make_ridge_problem
 from parallel_cg_ridge.operators import make_ridge_operator
@@ -62,6 +63,17 @@ w_dist, iters_dist, res_dist, conv_dist = cg(
     maxiter=100,
 )
 
+# Split operator and distributed RHS
+start_A, finish_A, split_timings = make_split_ridge_operator(X_local, lam, comm)
+
+def apply_A_split(p):
+    start_A(p)
+    return finish_A(p)
+
+w_split, iters_split, res_split, conv_split = cg(
+    apply_A_split, b_dist, tol=1e-10, maxiter=100
+)
+
 # Only rank 0 performs the serial reference comparison
 if rank == 0:
     apply_A_serial = make_ridge_operator(X, lam)
@@ -95,3 +107,8 @@ if rank == 0:
     print("compute time:", timings["compute"])
     print("comm time:", timings["comm"])
     print("operator calls:", timings["calls"])
+    print("split iterations:", iters_split)
+    print("split vs distributed:", np.linalg.norm(w_split - w_dist))
+    print("split compute:", split_timings["compute"])
+    print("split comm:", split_timings["comm"])
+    print("split calls:", split_timings["calls"])
