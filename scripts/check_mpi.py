@@ -8,6 +8,7 @@ from parallel_cg_ridge.cg_mpi import (
     row_partition,
     make_split_ridge_operator,
 )
+from parallel_cg_ridge.pipelined import pipelined_cg
 from parallel_cg_ridge.data import make_ridge_problem
 from parallel_cg_ridge.operators import make_ridge_operator
 
@@ -67,11 +68,16 @@ w_dist, iters_dist, res_dist, conv_dist = cg(
 start_A, finish_A, split_timings = make_split_ridge_operator(X_local, lam, comm)
 
 def apply_A_split(p):
-    start_A(p)
-    return finish_A(p)
+    req = start_A(p)
+    return finish_A(req, p)
 
 w_split, iters_split, res_split, conv_split = cg(
     apply_A_split, b_dist, tol=1e-10, maxiter=100
+)
+
+# Pipelined CG
+w_pipe, iters_pipe, res_pipe, conv_pipe = pipelined_cg(
+    start_A, finish_A, b_dist, tol=1e-10, maxiter=100
 )
 
 # Only rank 0 performs the serial reference comparison
@@ -112,3 +118,6 @@ if rank == 0:
     print("split compute:", split_timings["compute"])
     print("split comm:", split_timings["comm"])
     print("split calls:", split_timings["calls"])
+    print("pipelined iterations:", iters_pipe)
+    print("pipelined converged:", conv_pipe)
+    print("pipelined vs distributed:", np.linalg.norm(w_pipe - w_dist))

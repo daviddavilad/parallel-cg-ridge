@@ -95,10 +95,11 @@ def make_split_ridge_operator(X_local, lam, comm):
         timings["calls"] += 1
 
         state["req"] = comm.Iallreduce(state["partial"], recvbuf, op=MPI.SUM)
+        return state["req"]
 
-    def finish_A(p):
+    def finish_A(req, p):
         t0 = MPI.Wtime()
-        state["req"].Wait()
+        req.Wait()
         timings["comm"] += MPI.Wtime() - t0
         state["req"] = None
         return recvbuf + lam * p
