@@ -137,3 +137,11 @@ The cause was rank placement. Hopper nodes have two sockets of 16 cores, each wi
 `srun --cpu-bind=cores` had no effect here; every rank still reported all 32 CPUs. Pinning explicitly with `os.sched_setaffinity(0, {rank})` worked. CPU numbering alternates between sockets, so pinning rank r to CPU r splits ranks evenly for any P. The pin happens before the data is scattered, so each rank's block is allocated in its own socket's memory.
 
 With pinning, per-rank compute varies by at most 6% and three independent runs agree within 2%. All reported timings use this configuration.
+
+### Prediction: pipelined CG in this layout
+
+Standard distributed CG performs one blocking `Allreduce` per iteration, inside the operator. Pipelined CG (Ghysels & Vanroose Algorithm 3) issues that reduction non-blocking and overlaps it with local work. In the row-distributed, replicated-vector layout the only work available for the overlap window is four AXPYs on `d`-vectors: `s`, `p`, `x` and `r`. At `d = 200` that is roughly 800 flops, against a reduction latency of tens of microseconds.
+
+Pipelined CG also performs `k + 1` operator applications for `k` iterations, since `w_0 = A r_0` must be computed before the loop, and adds four vector updates per iteration relative to standard CG.
+
+Prediction, recorded before measurement: exposed communication time (the duration of `Wait`) will be essentially unchanged, because the overlap window is too small to cover the reduction latency. Total runtime will be slightly worse than standard CG, by the cost of the extra operator application and the extra AXPYs. Iteration counts should match standard CG closely; the paper reports about 3% more on average across the test matrices they used for experiments.
