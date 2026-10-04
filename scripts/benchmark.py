@@ -9,9 +9,11 @@ from parallel_cg_ridge.cg import cg
 from parallel_cg_ridge.cg_mpi import (
     assemble_rhs,
     make_distributed_ridge_operator,
+    make_split_ridge_operator,
     scatter_rows,
 )
 from parallel_cg_ridge.data import make_ridge_problem
+from parallel_cg_ridge.pipelined import pipelined_cg
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -34,6 +36,7 @@ parser.add_argument("--lam", type=float, default=1e-3)
 parser.add_argument("--cond", type=float, default=100.0)
 parser.add_argument("--warmup", type=int, default=1)
 parser.add_argument("--reps", type=int, default=5)
+parser.add_argument("--solver", choices=["cg", "pipelined"], default="cg")
 args = parser.parse_args()
 
 if rank == 0:
@@ -45,12 +48,22 @@ X_local = scatter_rows(X, comm)
 y_local = scatter_rows(y, comm)
 del X, y
 
-apply_A, timings = make_distributed_ridge_operator(X_local, args.lam, comm)
+if args.solver == "cg":
+    apply_A, timings = make_distributed_ridge_operator(X_local, args.lam, comm)
+
+    def solve():
+        return cg(apply_A, b, tol=1e-10, maxiter=10 * args.d)
+else:
+    start_A, finish_A, timings = make_split_ridge_operator(X_local, args.lam, comm)
+
+    def solve():
+        return pipelined_cg(start_A, finish_A, b, tol=1e-10, maxiter=10 * args.d)
+
 b = assemble_rhs(X_local, y_local, comm)
 
 for _ in range(args.warmup):
     timings.update(compute=0.0, comm=0.0, calls=0)
-    cg(apply_A, b, tol=1e-10, maxiter=10 * args.d)
+    solve()
 
 cpus_per_rank = comm.gather(cpus, root=0)
 
@@ -63,7 +76,7 @@ for _ in range(args.reps):
     comm.Barrier()
 
     t0 = MPI.Wtime()
-    w, iters, res, converged = cg(apply_A, b, tol=1e-10, maxiter=10 * args.d)
+    w, iters, res, converged = solve()
     t1 = MPI.Wtime()
 
     wall = t1 - t0
@@ -98,5 +111,6 @@ if rank == 0:
         "iters": records[0]["iters"],
         "converged": all(r["converged"] for r in records),
         "cpus_per_rank": cpus_per_rank,
+        "solver": args.solver
     }
     print(json.dumps(result))
