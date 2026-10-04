@@ -9,13 +9,16 @@ for r in rows:
     it = r["iters"]
 
     c = r.get("compute_per_rank")
-    if c:
-        stats = f"min={min(c):.3f}  max={max(c):.3f}  ratio={max(c)/min(c):.2f}"
-    else:
-        stats = "min=—  max=—  ratio=—"
+    solver = r.get("solver", "cg")
+    comm = r["comm"]
+    compute = r["compute"]
+
+    # Normalize by iterations
+    ms_per_iter = 1000 * w / it
+    comm_per_iter = 1000 * comm / it
 
     cpr = r.get("cpus_per_rank")
     cpus = [x[0] if x else None for x in cpr] if cpr else "—"
 
     n = r["n"]
-    print(f"n={n:>7}  P={p:>2}  iters={it:>3}  wall={w:.3f}  {stats}")
+    print(f"n={n:>7}  P={p:>2}  iters={it:>3}  wall={w:.3f}  compute={compute:.3f}  comm={comm:.3f}")
