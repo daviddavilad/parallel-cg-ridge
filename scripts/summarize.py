@@ -21,4 +21,4 @@ for r in rows:
     cpus = [x[0] if x else None for x in cpr] if cpr else "—"
 
     n = r["n"]
-    print(f"n={n:>7}  P={p:>2}  iters={it:>3}  wall={w:.3f}  compute={compute:.3f}  comm={comm:.3f}")
+    print(f"solver={solver}  n={n:>7}  P={p:>2}  iters={it:>3}  wall={w:.3f}  compute={compute:.3f}  comm={comm:.3f}")
