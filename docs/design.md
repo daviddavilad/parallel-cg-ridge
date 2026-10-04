@@ -145,3 +145,13 @@ Standard distributed CG performs one blocking `Allreduce` per iteration, inside 
 Pipelined CG also performs `k + 1` operator applications for `k` iterations, since `w_0 = A r_0` must be computed before the loop, and adds four vector updates per iteration relative to standard CG.
 
 Prediction, recorded before measurement: exposed communication time (the duration of `Wait`) will be essentially unchanged, because the overlap window is too small to cover the reduction latency. Total runtime will be slightly worse than standard CG, by the cost of the extra operator application and the extra AXPYs. Iteration counts should match standard CG closely; the paper reports about 3% more on average across the test matrices they used for experiments.
+
+### Result: pipelined CG does not improve on standard CG in this layout
+
+Measured on Hopper, `d = 200`, 20 repetitions per configuration, three independent jobs (4328402, 4328403, 4328404) on three different nodes, one BLAS thread per rank, ranks pinned by node-local index.
+
+Across all 54 paired comparisons (three problem sizes, six rank counts, three runs) pipelined CG was slower than standard CG in every case, typically by 2-4% in wall time. Iteration counts were consistently one to two higher (91 against 93 at `P = 1`, about 2%), close to the 3% average reported by Ghysels and Vanroose across their test matrices.
+
+Overlap does occur. At `n = 50000`, `P = 32`, exposed communication falls from 7 ms to 5 ms, consistently across all three runs. It is simply never enough to offset the cost: pipelined CG performs `k + 1` operator applications for `k` iterations and four additional vector updates per iteration.
+
+This confirms the prediction recorded before measurement. The structural reason is the one given in the  Ghysels & Vanroose reading note: the method hides a dot-product reduction behind an independent operator application, but in this layout the dot products require no communication at all, and the only reduction sits inside the operator with every subsequent quantity depending on its result.
