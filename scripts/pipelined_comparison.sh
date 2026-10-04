@@ -16,11 +16,13 @@ D=${2:-200}
 OUT=${3:-results/pipelined_comparison_${SLURM_JOB_ID}.jsonl}
 mkdir -p "$(dirname "$OUT")"
 
-for P in 1 2 4 8 16 32; do
-  for SOLVER in cg pipelined; do
-    echo "running P=$P solver=$SOLVER" >&2
-    OMP_NUM_THREADS=1 timeout 600 srun --mpi=pmi2 -n "$P" \
-      python scripts/benchmark.py --n "$N" --d "$D" --reps 5 --solver "$SOLVER" >> "$OUT" \
-      || echo "P=$P $SOLVER failed" >&2
+for N in 10000 50000 500000; do
+  for P in 1 2 4 8 16 32; do
+    for SOLVER in cg pipelined; do
+      echo "running n=$N P=$P solver=$SOLVER" >&2
+      OMP_NUM_THREADS=1 timeout 600 srun --mpi=pmi2 -n "$P" \
+        python scripts/benchmark.py --n "$N" --d "$D" --reps 20 --solver "$SOLVER" >> "$OUT" \
+        || echo "n=$N P=$P $SOLVER failed" >&2
+    done
   done
 done
