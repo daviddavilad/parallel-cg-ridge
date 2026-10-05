@@ -155,3 +155,11 @@ Across all 54 paired comparisons (three problem sizes, six rank counts, three ru
 Overlap does occur. At `n = 50000`, `P = 32`, exposed communication falls from 7 ms to 5 ms, consistently across all three runs. It is simply never enough to offset the cost: pipelined CG performs `k + 1` operator applications for `k` iterations and four additional vector updates per iteration.
 
 This confirms the prediction recorded before measurement. The structural reason is the one given in the  Ghysels & Vanroose reading note: the method hides a dot-product reduction behind an independent operator application, but in this layout the dot products require no communication at all, and the only reduction sits inside the operator with every subsequent quantity depending on its result.
+
+### Prediction: weak scaling
+
+Weak scaling fixes the work per rank and grows the problem with the rank count: `n = 15625 * P`, so each rank holds 15,625 rows at every `P`. Ideal behavior is constant runtime, since each rank performs the same local work regardless of how many ranks there are.
+
+Two effects should push runtime up as `P` grows. The `Allreduce` cost grows as `log P`, though the strong-scaling runs showed exposed communication is only a few percent of runtime at these sizes. The larger effect should be memory bandwidth: at `P = 1` a single core has the node's memory controllers to itself, while at `P = 32` all 32 cores share them, and the dense matrix-vector product is bandwidth-bound. The earlier single-node results showed compute time per rank rising with occupancy for exactly this reason.
+
+Prediction, recorded before measurement: weak-scaling efficiency will degrade substantially, with most of the degradation attributable to memory bandwidth rather than communication. The degradation should be visible in the `compute` column, not only in `wall`, which distinguishes it from a communication-driven explanation.
