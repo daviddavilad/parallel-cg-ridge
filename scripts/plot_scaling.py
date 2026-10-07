@@ -17,8 +17,16 @@ elif which == "speedup":
     data = speedup(load_results(paths))
     ylabel = "Iteration-normalized speedup"
     outname = "speedup.png"
+elif which == "efficiency-raw":
+    data = efficiency(load_results(paths), normalize=False)
+    ylabel = "Unnormalized parallel efficiency"
+    outname = "efficiency-raw.png"
+elif which == "speedup-raw":
+    data = speedup(load_results(paths), normalize=False)
+    ylabel = "Unnormalized parallel speedup"
+    outname = "speedup-raw.png"
 else:
-    raise SystemExit("usage: plot_scaling.py [efficiency|speedup] FILES...")
+    raise SystemExit("usage: plot_scaling.py [efficiency|speedup|efficiency-raw|speedup-raw] FILES...")
 
 fig, ax = plt.subplots()
 all_p = set()
@@ -34,7 +42,7 @@ ax.set_xscale("log", base=2)
 ax.set_xticks(ticks)
 ax.set_xticklabels([str(p) for p in ticks])
 
-if which == "efficiency":
+if which.startswith("efficiency"):
     ax.axhline(1.0, color="gray", linestyle="--", linewidth=1, label="ideal")
 else:
     ax.set_yscale("log", base=2)

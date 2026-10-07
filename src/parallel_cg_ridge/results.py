@@ -19,38 +19,48 @@ def group_by_size(rows: list[dict]) -> dict[int, list[dict]]:
 
     return groups
 
-def efficiency(rows: list[dict]) -> dict[int, list[tuple[int, float]]]:
-    """Iteration-normalized parallel efficiency, grouped by problem size."""
+def efficiency(rows: list[dict], normalize: bool = True) -> dict[int, list[tuple[int, float]]]:
+    """Iteration-normalized parallel efficiency (bool = True, else not normalized), grouped by problem size."""
     groups = group_by_size(rows)
     out: dict[int, list[tuple[int, float]]] = {}
 
     for n, group in groups.items():
+
         baseline = next((r for r in group if r["P"] == 1), None)
+
         if baseline is None:
             continue
 
+        t1 = baseline["wall"] / baseline["iters"] if normalize else baseline["wall"]
+
         pairs = []
         for r in group:
-            e = (baseline["wall"] / baseline["iters"]) / (r["P"] * r["wall"] / r["iters"])
+            tp = r["wall"] / r["iters"] if normalize else r["wall"]
+            e = t1 / (r["P"] * tp)
             pairs.append((r["P"], e))
 
         out[n] = sorted(pairs)
 
     return out
 
-def speedup(rows: list[dict]) -> dict[int, list[tuple[int, float]]]:
-    """Iteration-normalized parallel speedup, grouped by problem size."""
+def speedup(rows: list[dict], normalize: bool = True) -> dict[int, list[tuple[int, float]]]:
+    """Iteration-normalized parallel speedup (bool = True, else not normalized), grouped by problem size."""
     groups = group_by_size(rows)
     out: dict[int, list[tuple[int, float]]] = {}
 
     for n, group in groups.items():
+
         baseline = next((r for r in group if r["P"] == 1), None)
+
         if baseline is None:
             continue
 
+        t1 = baseline["wall"] / baseline["iters"] if normalize else baseline["wall"]
+
         pairs = []
         for r in group:
-            s = (baseline["wall"] / baseline["iters"]) / (r["wall"] / r["iters"])
+            tp = r["wall"] / r["iters"] if normalize else r["wall"]
+            s = t1 / tp
             pairs.append((r["P"], s))
 
         out[n] = sorted(pairs)
