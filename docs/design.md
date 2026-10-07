@@ -163,3 +163,26 @@ Weak scaling fixes the work per rank and grows the problem with the rank count: 
 Two effects should push runtime up as `P` grows. The `Allreduce` cost grows as `log P`, though the strong-scaling runs showed exposed communication is only a few percent of runtime at these sizes. The larger effect should be memory bandwidth: at `P = 1` a single core has the node's memory controllers to itself, while at `P = 32` all 32 cores share them, and the dense matrix-vector product is bandwidth-bound. The earlier single-node results showed compute time per rank rising with occupancy for exactly this reason.
 
 Prediction, recorded before measurement: weak-scaling efficiency will degrade substantially, with most of the degradation attributable to memory bandwidth rather than communication. The degradation should be visible in the `compute` column, not only in `wall`, which distinguishes it from a communication-driven explanation.
+
+### Result: weak scaling
+
+Measured on Hopper, 15,625 rows per rank, `d = 200`, three independent jobs (IDs 4328414, 4328415, 4328416), one BLAS thread per rank, ranks pinned by node-local index.
+
+| P | wall (s) | compute (s) | comm (s) | efficiency |
+|---|---|---|---|---|
+| 1 | 0.218 | 0.215 | 0.001 | 1.00 |
+| 2 | 0.229 | 0.222 | 0.003 | 0.95 |
+| 4 | 0.326 | 0.321 | 0.007 | 0.67 |
+| 8 | 0.382 | 0.372 | 0.020 | 0.57 |
+| 16 | 0.461 | 0.450 | 0.029 | 0.47 |
+| 32 | 0.714 | 0.703 | 0.046 | 0.31 |
+
+Medians of three runs, which agree within about 2%. Efficiency is $`T(1)/T(P)`$, since the work per rank is constant.
+
+The prediction holds. Of the 0.50 s increase in wall time from `P = 1` to `P = 32`, compute accounts for 0.49 s; communication reaches only 6% of wall time. Each rank performs identical work at every `P`, so the 3x rise in per-rank compute time is memory-bandwidth contention, not communication.
+
+Regarding the dynamics, runtime is nearly flat from `P = 1` to `P = 2` and jumps 45% at `P = 4`. Because rank `r` is pinned to CPU `r` and CPU numbering alternates between sockets, `P = 2` places one rank on each socket and neither socket's memory controllers are shared. Contention begins at `P = 4`, when each socket first holds two ranks. The controlling variable is ranks per memory domain.
+
+The `P = 32` configuration (`n = 500000`) coincides with the `P = 32` point of the strong-scaling study, and both measure 0.71 s.
+
+Limitation: this is weak scaling within a single node, so it measures intra-node bandwidth contention rather than distributed-memory scaling. A multi-node weak scaling run at fixed ranks per node is the natural follow-up.
