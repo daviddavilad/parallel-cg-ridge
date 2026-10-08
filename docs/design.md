@@ -208,3 +208,34 @@ Prediction, recorded before measurement:
 The `√κ` bound depends only on the extreme eigenvalues, while CG responds to the whole spectrum, so the generator's spacing of singular values will shift the curve.
 
 Two key points worth having in mind. The attainable accuracy is roughly `κ · ε_machine ≈ 1e-10`, at the tolerance itself, so the recursively updated residual may keep shrinking while the true residual `‖b − Ax‖ / ‖b‖` stalls, we record both. And `maxiter = 20d`, so that the cap does not determine the iteration count.
+
+### Result: regularization, conditioning and CG iterations
+
+Single run, `n = 20000`, `d = 500`, generator `cond = 1e6` (`σ²_min = 1e-6`, `σ²_max = 1`), tolerance `1e-10`, `maxiter = 10000`. Data: `results/final/lambda_sweep.jsonl`.
+
+| λ | κ(A) | iterations |
+|---|---|---|
+| 1 | 2.0 | 13 |
+| 1e-1 | 11 | 34 |
+| 1e-2 | 101 | 91 |
+| 1e-3 | 1,000 | 240 |
+| 1e-4 | 9,902 | 626 |
+| 1e-5 | 90,910 | 1,608 |
+| 1e-6 | 500,000 | 3,285 |
+| 1e-7 | 909,091 | 4,253 |
+| 1e-8 | 990,099 | 4,376 |
+| 0 | 1,000,000 | 4,365 |
+
+Every run converged, and the true residual `‖b − Ax‖ / ‖b‖` agrees with CG's recursively updated residual to about six significant digits throughout, so the attainable-accuracy issue did not show up in the results.
+
+**Regime 1 (√κ growth): correct, with a slightly lower slope.** On a log-log scale, iterations grow with slope 0.42–0.44 in `κ(A)`, a little below the ½ of the classical bound. The bound is pessimistic by a factor of 1.6–2.7: it predicts about 12,000 iterations at `κ = 1e6`, against 4,365 measured.
+
+**Regime 2 (flattening at d = 500): incorrect.** Nothing happens at `d`. The iteration count crosses 500 near `λ = 2e-4` and continues on the same slope to about 3,300, then flattens only because `κ(A)` itself stops changing. At `λ = 0`, CG takes 4,365 iterations on a 500-dimensional problem, 8.7x the exact-arithmetic limit.
+
+The explanation is finite precision. Termination in at most `d` steps depends on the search directions remaining exactly `A`-orthogonal, and rounding destroys that orthogonality. Greenbaum (1989) showed that finite-precision CG behaves like exact CG applied to a larger matrix whose eigenvalues cluster around those of `A`, so its convergence is governed by conditioning rather than dimension. The data show this directly: the `√κ` trend ignores `d`.
+
+**Regime 3 (flat below σ²_min): correct.** Below `λ = 1e-7` the counts lie between 4,253 and 4,376. The 0.25% decrease at the smallest `λ` values is within the variation of a single deterministic run and is not a trend.
+
+Implication for communication cost: iteration counts span a factor of 336 across this sweep, and in the row-distributed layout each iteration costs one global reduction. Reducing `κ(A)` through preconditioning is therefore the most direct lever on communication, which motivates the sketch-preconditioned experiment.
+
+Reference: A. Greenbaum, "Behavior of slightly perturbed Lanczos and conjugate-gradient recurrences," *Linear Algebra and its Applications* 113 (1989), 7–63.

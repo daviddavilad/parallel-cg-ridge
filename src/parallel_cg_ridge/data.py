@@ -1,6 +1,5 @@
 import numpy as np
 
-
 def make_ridge_problem(
     n: int,
     d: int,

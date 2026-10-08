@@ -1,6 +1,5 @@
 import numpy as np
 
-
 def cg(apply_A, b, tol=1e-10, maxiter=None):
     """
     Conjugate Gradient method for solving Ax = b.
