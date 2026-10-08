@@ -228,7 +228,7 @@ Single run, `n = 20000`, `d = 500`, generator `cond = 1e6` (`σ²_min = 1e-6`, `
 
 Every run converged, and the true residual `‖b − Ax‖ / ‖b‖` agrees with CG's recursively updated residual to about six significant digits throughout, so the attainable-accuracy issue did not show up in the results.
 
-**Regime 1 (√κ growth): correct, with a slightly lower slope.** On a log-log scale, iterations grow with slope 0.42–0.44 in `κ(A)`, a little below the ½ of the classical bound. The bound is pessimistic by a factor of 1.6–2.7: it predicts about 12,000 iterations at `κ = 1e6`, against 4,365 measured.
+**Regime 1 (√κ growth): correct, with a slightly lower slope.** On a log-log scale, iterations grow with slope 0.42–0.44 in `κ(A)` (for κ ≳ 10), a little below the ½ of the classical bound. The bound is pessimistic by a factor of 1.6–2.7: it predicts about 12,000 iterations at `κ = 1e6`, against 4,365 measured.
 
 **Regime 2 (flattening at d = 500): incorrect.** Nothing happens at `d`. The iteration count crosses 500 near `λ = 2e-4` and continues on the same slope to about 3,300, then flattens only because `κ(A)` itself stops changing. At `λ = 0`, CG takes 4,365 iterations on a 500-dimensional problem, 8.7x the exact-arithmetic limit.
 

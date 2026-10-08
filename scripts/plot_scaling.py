@@ -9,6 +9,9 @@ from parallel_cg_ridge.results import load_results, efficiency, speedup
 which = sys.argv[1]
 paths = sys.argv[2:]
 
+if len(sys.argv) < 3:
+    raise SystemExit("usage: plot_scaling.py [efficiency|speedup|efficiency-raw|speedup-raw] FILES...")
+
 if which == "efficiency":
     data = efficiency(load_results(paths))
     ylabel = "Iteration-normalized parallel efficiency"
