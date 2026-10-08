@@ -186,3 +186,25 @@ Regarding the dynamics, runtime is nearly flat from `P = 1` to `P = 2` and jumps
 The `P = 32` configuration (`n = 500000`) coincides with the `P = 32` point of the strong-scaling study, and both measure 0.71 s.
 
 Limitation: this is weak scaling within a single node, so it measures intra-node bandwidth contention rather than distributed-memory scaling. A multi-node weak scaling run at fixed ranks per node is the natural follow-up.
+
+### Prediction: regularization, conditioning and CG iterations
+
+The convergence rate of CG depends on the condition number of `A = XᵀX + λI`:
+
+$$
+\kappa(A) = \frac{\sigma_{\max}^2 + \lambda}{\sigma_{\min}^2 + \lambda}.
+$$
+
+For the test problem (`n = 20000`, `d = 500`, generator `cond = 1e6`), the eigenvalues of `XᵀX` span `σ²_min = 1e-6` to `σ²_max = 1`. Regularization improves conditioning whenever `λ` is comparable to or larger than `σ²_min`: for `λ ≫ σ²_min`, `κ(A) ≈ 1/λ`; for `λ ≪ σ²_min`, `κ(A) ≈ κ(XᵀX) = 1e6` and stops changing.
+
+The standard bound gives roughly `½ √κ ln(2/ε)` iterations, about `12 √κ` at `ε = 1e-10`. In exact arithmetic CG also terminates in at most `d = 500` iterations, and the bound reaches 500 at `κ(A) ≈ 1700`, i.e. `λ ≈ 6e-4`.
+
+Prediction, recorded before measurement:
+
+1. `λ` above ~`6e-4`: iterations grow like `√κ(A)`, a slope of ½ on a log-log plot of iterations against `κ(A)`.
+2. `λ` from ~`6e-4` down to ~`1e-6`: the bound exceeds `d`. Iterations flatten near `d = 500`, as finite termination caps them.
+3. `λ` below ~`1e-6`, including `λ = 0`: `κ(A)` is fixed at about `1e6`, so iterations are flat.
+
+The `√κ` bound depends only on the extreme eigenvalues, while CG responds to the whole spectrum, so the generator's spacing of singular values will shift the curve.
+
+Two key points worth having in mind. The attainable accuracy is roughly `κ · ε_machine ≈ 1e-10`, at the tolerance itself, so the recursively updated residual may keep shrinking while the true residual `‖b − Ax‖ / ‖b‖` stalls, we record both. And `maxiter = 20d`, so that the cap does not determine the iteration count.
