@@ -265,3 +265,29 @@ Prediction, recorded before measurement:
 2. For large `λ`, preconditioning is worse. At `λ = 1`, plain CG needs only 13 iterations because `κ(A) = 2`, below what the preconditioner achieves. The crossover should fall where `κ(A)` matches the preconditioned condition number, between about `λ = 3e-2` and `λ = 1e-1` depending on `s`.
 
 Iteration counts are not the whole cost. The sketch and QR are paid once: about `2snd` flops for a dense Gaussian sketch and `O(sd²)` for the QR. At `s = 2d` the sketch alone costs about as much as 500 iterations of matrix-vector products, so wall time is recorded separately. With a dense Gaussian sketch, setup may consume much of the savings at moderate `λ`, which motivates the sparse sign sketch as the next step.
+
+### Result: sketch-preconditioned CG
+
+Same problem and grid as the regularization sweep, Gaussian sketch with `s = 2d` and `s = 4d`, one BLAS thread. Data: `results/final/lambda_sweep_*`.
+
+| λ | none | s=2d | s=4d | none (s) | s=2d (s) | s=4d (s) |
+|---|---|---|---|---|---|---|
+| 1 | 13 | 10 | 9 | 0.065 | 0.52 | 1.04 |
+| 1e-2 | 91 | 22 | 17 | 0.45 | 0.57 | 1.13 |
+| 1e-3 | 240 | 28 | 20 | 1.23 | 0.60 | 1.05 |
+| 1e-5 | 1,590 | 42 | 27 | 7.9 | 0.73 | 1.08 |
+| 0 | 4,380 | 58 | 31 | 21.4 | 0.80 | 1.09 |
+
+Iteration counts in the first three columns. Total time (setup plus solve) in the last three.
+
+**Reduction at λ = 0: confirmed.** Iterations fall 75× (`s = 2d`) and 141× (`s = 4d`), so the row-distributed solver would need that many fewer global reductions. Wall time falls 27× and 20×.
+
+**Plateau height: confirmed.** Both arms plateau below `λ ≈ 1e-7`. The measured `κ(M⁻¹A) = 7.7` at `s = 4d` corresponds, in the unpreconditioned sweep, to about 30 iterations (the plateau is 31). The predicted `κ ≈ 34` at `s = 2d` corresponds to 55 (the plateau is 58).
+
+**Constant iterations across λ: refuted.** Iterations rise from about 10 at `λ = 1` to the plateau. The preconditioner is built from `[SX; √λ I]`, and the `√λ I` block is exact, so when `λ` dominates `XᵀX` the sketch error is negligible and `κ(M⁻¹A)` approaches 1. As `λ` shrinks, sketch error dominates and `κ(M⁻¹A)` rises to its asymptotic value.
+
+**Preconditioning loses at large λ: refuted in iterations, but confirmed in wall time.** Preconditioned CG never needs more iterations, for the reason above. But setup costs 0.46 s (`s = 2d`) and 0.94 s (`s = 4d`), so plain CG is faster for `λ` above about `5e-3` and `1.5e-3` respectively (a smaller crossover than predicted), because setup is expensive.
+
+**Setup dominates.** At `s = 4d` setup is 85% of total time, which is why `s = 2d` is faster overall at `λ = 0` despite twice the iterations. The dense Gaussian sketch costs `O(snd)`. A sparse sign sketch would cut this to `O(ζnd)`.
+
+**Note on reproducibility.** The unpreconditioned arm differs from the original sweep by 1–3% at high `κ` (e.g. 616 versus 626 iterations at `λ = 1e-4`). The original used multi-threaded BLAS, and this run used one thread. Summation order changes rounding, and at high `κ` CG's iteration count is sensitive to it.

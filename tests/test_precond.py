@@ -13,5 +13,6 @@ def test_sketch_preconditioner_reduces_conditioning():
     ev = np.sort(np.abs(np.linalg.eigvals(MinvA)))
     kappa_pre = ev[-1] / ev[0]
 
+    print("kappa_pre:", kappa_pre)
     assert kappa_pre < 20          # predicted ≈ 9 at s = 4d
     assert np.linalg.cond(A) > 1e5 # sanity: the problem really is ill-conditioned
