@@ -45,3 +45,66 @@ def cg(apply_A, b, tol=1e-10, maxiter=None):
         rsold = rsnew
 
     return x, i + 1, np.sqrt(rsnew) / b_norm, converged # caller inspects the flag to determine if the solution is valid
+
+def pcg(apply_A, apply_Minv, b, tol=1e-10, maxiter=None):
+    """
+    Solve Ax = b using preconditioned conjugate gradient.
+
+    Based on Algorithm 1 of Ghysels & Vanroose (2014).
+    apply_Minv(r) returns M^{-1}r.
+
+    Returns (x, iters, rel_res, converged).
+    """
+    n = b.shape[0]
+
+    if maxiter is None:
+        maxiter = n
+
+    x = np.zeros_like(b)
+    r = b.copy()
+
+    b_norm = np.linalg.norm(b)
+
+    if b_norm == 0:
+        return x, 0, 0.0, True
+
+    # Initial preconditioned residual
+    u = apply_Minv(r)
+
+    # Initial search direction
+    p = u.copy()
+
+    # Scalar needed for alpha and beta
+    rho = np.dot(r, u)
+
+    rel_res = np.linalg.norm(r) / b_norm
+    iters = 0
+    converged = False
+
+    for i in range(maxiter):
+        s = apply_A(p)
+
+        alpha = rho / np.dot(p, s)
+
+        x += alpha * p
+        r -= alpha * s
+
+        rel_res = np.linalg.norm(r) / b_norm
+
+        iters = i + 1
+
+        if rel_res < tol:
+            converged = True
+            break
+
+        u_new = apply_Minv(r)
+        rho_new = np.dot(r, u_new)
+
+        beta = rho_new / rho
+
+        p = u_new + beta * p
+
+        # Update scalar history
+        rho = rho_new
+
+    return x, iters, rel_res, converged
