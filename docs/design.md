@@ -239,3 +239,29 @@ The explanation is finite precision. Termination in at most `d` steps depends on
 Implication for communication cost: iteration counts span a factor of 336 across this sweep, and in the row-distributed layout each iteration costs one global reduction. Reducing `κ(A)` through preconditioning is therefore the most direct lever on communication, which motivates the sketch-preconditioned experiment.
 
 Reference: A. Greenbaum, "Behavior of slightly perturbed Lanczos and conjugate-gradient recurrences," *Linear Algebra and its Applications* 113 (1989), 7–63.
+
+### Prediction: sketch-preconditioned CG
+
+Method: sketch `X` with a Gaussian matrix `S` of size `s × n`, QR-factor the stacked matrix `[SX; √λ I] = QR`, and precondition CG with `M = RᵀR`, so that `M ≈ XᵀX + λI = A`. Applying `M⁻¹` is two triangular solves with `R`.
+
+Setup: the same problem as the regularization sweep (`n = 20000`, `d = 500`, `cond = 1e6`), the same tolerance `1e-10`, and the same `λ` grid.
+
+For a Gaussian sketch, the singular values of the sketched matrix lie roughly in `[1 − √(d/s), 1 + √(d/s)]`, so the preconditioned condition number is about
+
+$$
+\kappa(M^{-1}A) \approx \left(\frac{1 + \sqrt{d/s}}{1 - \sqrt{d/s}}\right)^2,
+$$
+
+which gives
+
+- `s = 2d` → `κ ≈ 34`
+- `s = 4d` → `κ ≈ 9`
+
+In the unpreconditioned sweep, `κ = 32` took 55 iterations and `κ = 11` took 34.
+
+Prediction, recorded before measurement:
+
+1. With preconditioning, iteration counts are roughly constant across the whole `λ` grid, about 30 to 55 depending on `s`, against 13 to 4,365 without. At `λ = 0` that is a reduction of roughly 100×, and in the row-distributed layout, roughly 100× fewer global reductions.
+2. For large `λ`, preconditioning is worse. At `λ = 1`, plain CG needs only 13 iterations because `κ(A) = 2`, below what the preconditioner achieves. The crossover should fall where `κ(A)` matches the preconditioned condition number, between about `λ = 3e-2` and `λ = 1e-1` depending on `s`.
+
+Iteration counts are not the whole cost. The sketch and QR are paid once: about `2snd` flops for a dense Gaussian sketch and `O(sd²)` for the QR. At `s = 2d` the sketch alone costs about as much as 500 iterations of matrix-vector products, so wall time is recorded separately. With a dense Gaussian sketch, setup may consume much of the savings at moderate `λ`, which motivates the sparse sign sketch as the next step.
