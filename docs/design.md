@@ -291,3 +291,17 @@ Iteration counts in the first three columns. Total time (setup plus solve) in th
 **Setup dominates.** At `s = 4d` setup is 85% of total time, which is why `s = 2d` is faster overall at `λ = 0` despite twice the iterations. The dense Gaussian sketch costs `O(snd)`. A sparse sign sketch would cut this to `O(ζnd)`.
 
 **Note on reproducibility.** The unpreconditioned arm differs from the original sweep by 1–3% at high `κ` (e.g. 616 versus 626 iterations at `λ = 1e-4`). The original used multi-threaded BLAS, and this run used one thread. Summation order changes rounding, and at high `κ` CG's iteration count is sensitive to it.
+
+### Prediction: sparse sign sketch preconditioning
+
+The Gaussian-preconditioned sweep showed setup dominating total time: 0.46 s at `s = 2d`, almost all of it the dense product `SX`, which costs about `2snd` flops. A sparse sign sketch places `ζ` nonzeros per column of `S`, each `±1/√ζ`, so `SX` costs about `2ζnd`. At `s = 1000` and `ζ = 2` that is roughly 500× cheaper. The remaining setup is the QR of the `(s + d) × d` stacked matrix, about `2(s + d)d²` flops, around 4% of the Gaussian sketch cost.
+
+Setup: the same problem, tolerance and `λ` grid as before, `s = 2d`, with `ζ ∈ {1, 2, 4}`.
+
+Prediction, recorded before measurement:
+
+1. **Setup time** falls from about 0.46 s to under 0.1 s for every `ζ`.
+2. **Iteration counts.** `ζ = 2` and `ζ = 4` match the Gaussian arm within a few iterations (plateau ≈ 58), and `ζ = 1` needs noticeably more.
+3. **Wall-time crossover** with unpreconditioned CG moves to larger `λ`, since the setup floor drops by several times: preconditioning should pay off from about `λ ≈ 1e-2` or above, rather than `5e-3`.
+
+The open question is item 2. In my Randomized NLA research project (H8 in github.com/daviddavilad/randomized-numerical-linear-algebra), I measured low-rank approximation accuracy, where `ζ ≥ 2` matched Gaussian. Preconditioning instead requires the sketch to preserve the geometry of the entire column space of `X`, and the OSNAP theory guarantees that only for `ζ` growing like `log d` and `s` above roughly `d log d`. Notice that `s = 2d` with `ζ = 2` lies below those guarantees.
