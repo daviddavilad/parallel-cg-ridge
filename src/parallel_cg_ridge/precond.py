@@ -1,9 +1,14 @@
 import numpy as np
 from scipy.linalg import solve_triangular
+from scipy.sparse import csc_matrix
 
-def make_sketch_preconditioner(X, lam, s, seed=0):
+def make_sketch_preconditioner(X, lam, s, seed=0, kind="gaussian", zeta=2):
     """
-    Gaussian sketch-and-precondition.
+    Sketch-and-precondition with a Gaussian or sparse sign sketch.
+
+    Two kinds of sketching are used: Gaussian and sparse. 
+    kind="sparse" uses a sparse sign sketch: each column of S has zeta nonzeros,
+    each ±1/sqrt(zeta), in distinct rows. zeta = 1 is CountSketch.
 
     Returns apply_Minv, where M = R.T @ R
     approximates X.T @ X + lam * I.
@@ -14,13 +19,42 @@ def make_sketch_preconditioner(X, lam, s, seed=0):
         raise ValueError("lam must be non-negative")
     if s < d:
         raise ValueError("s must be at least d")
+    
+    if kind not in ("gaussian", "sparse"):
+        raise ValueError("kind must be 'gaussian' or 'sparse'")
+
+    if kind == "sparse" and not (1 <= zeta <= s // 2):
+        raise ValueError("zeta must be between 1 and s // 2")
 
     rng = np.random.default_rng(seed)
 
-    # Gaussian sketch
-    S = rng.standard_normal((s, n)) / np.sqrt(s)
+    if kind == "gaussian":
+        S = rng.standard_normal((s, n)) / np.sqrt(s)
 
-    # Sketch the design matrix
+    else:
+        # Generate zeta candidate row positions per column
+        positions = rng.integers(0, s, size=(n, zeta))
+
+        # Resample columns containing duplicate row positions
+        while True:
+            sorted_positions = np.sort(positions, axis=1)
+
+            collisions = np.any(sorted_positions[:, 1:] == sorted_positions[:, :-1], axis=1)
+
+            if not np.any(collisions):
+                break
+
+            n_collisions = np.count_nonzero(collisions)
+
+            positions[collisions] = rng.integers(0, s, size=(n_collisions, zeta))
+
+        rows = positions.ravel()
+        cols = np.repeat(np.arange(n), zeta)
+
+        vals = (rng.choice([-1.0, 1.0], size=zeta * n) / np.sqrt(zeta))
+
+        S = csc_matrix((vals, (rows, cols)), shape=(s, n))
+
     SX = S @ X
 
     # Incorporate ridge regularization
