@@ -305,3 +305,25 @@ Prediction, recorded before measurement:
 3. **Wall-time crossover** with unpreconditioned CG moves to larger `λ`, since the setup floor drops by several times: preconditioning should pay off from about `λ ≈ 1e-2` or above, rather than `5e-3`.
 
 The open question is item 2. In my Randomized NLA research project (H8 in github.com/daviddavilad/randomized-numerical-linear-algebra), I measured low-rank approximation accuracy, where `ζ ≥ 2` matched Gaussian. Preconditioning instead requires the sketch to preserve the geometry of the entire column space of `X`, and the OSNAP theory guarantees that only for `ζ` growing like `log d` and `s` above roughly `d log d`. Notice that `s = 2d` with `ζ = 2` lies below those guarantees.
+
+### Result: sparse sign sketch preconditioning
+
+Same problem, tolerance and `λ` grid as before, `s = 2d`, one BLAS thread, one sketch draw per arm. Data: `results/final/lambda_sweep_sparse_s2_z*.jsonl`.
+
+| | setup (s) | iters, λ = 1 | iters, λ = 1e-4 | iters, λ = 0 | total at λ = 0 (s) |
+|---|---|---|---|---|---|
+| none | — | 13 | 616 | 4,380 | 21.4 |
+| Gaussian | 0.46 | 10 | 35 | 58 | 0.80 |
+| sparse, `ζ = 1` | 0.025 | 10 | 35 | 57 | 0.36 |
+| sparse, `ζ = 2` | 0.031 | 10 | 35 | 58 | 0.45 |
+| sparse, `ζ = 4` | 0.033 | 10 | 35 | 60 | 0.36 |
+
+**Setup time: confirmed.** 0.025–0.035 s for every `ζ`, about 15× below the Gaussian sketch.
+
+**Iteration counts: partly refuted.** `ζ = 2` and `ζ = 4` match the Gaussian arm within two iterations at every `λ`, as predicted. But `ζ = 1` matches as well, contrary to the expectation and the worst-case OSNAP bounds: a CountSketch with `s = 2d` preconditions this problem as well as a dense Gaussian sketch. One-iteration differences are within the variation of a single sketch draw.
+
+The likely reason is coherence. The worst-case guarantees are driven by matrices whose leverage is concentrated in a few rows, which a one-nonzero sketch can miss. The test matrix is `X = UΣVᵀ` with Haar-random `U`, so leverage is spread evenly across rows (the most favorable case for sparse sketches). The claim supported here is therefore limited: on incoherent problems `ζ = 1` suffices. Behavior on coherent problems is untested.
+
+**Wall-time crossover: confirmed.** With `ζ = 1`, plain CG is faster only at `λ = 1` (0.065 s against 0.087 s); the two tie near `λ ≈ 0.3`, and preconditioned CG is faster at every smaller `λ`. The prediction was `λ ≈ 1e-2` or above. At `λ = 0`, sparse preconditioning is 59× faster end to end than plain CG.
+
+Solve times vary by up to about 25% between arms with identical iteration counts (0.33 s against 0.42 s), which is run-to-run machine variation. Therefore, iteration counts are the reliable comparison.

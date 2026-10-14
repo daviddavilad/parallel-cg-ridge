@@ -15,11 +15,12 @@ parser.add_argument("--n", type=int, default=20_000)
 parser.add_argument("--d", type=int, default=500)
 parser.add_argument("--cond", type=float, default=1e6)
 parser.add_argument("--maxiter_multiplier", type=int, default=20)
-parser.add_argument("--precond", choices=["none", "gaussian"], default="none")
+parser.add_argument("--precond", choices=["none", "gaussian", "sparse"], default="none")
 parser.add_argument("--s_factor", type=int, default=4)
+parser.add_argument("--zeta", type=int, default=2)
 args = parser.parse_args()
 
-if args.precond == "gaussian" and args.s_factor < 1:
+if args.precond in ("gaussian", "sparse") and args.s_factor < 1:
     parser.error("--s_factor must be at least 1")
 
 X, y, _ = make_ridge_problem(n=args.n, d=args.d, cond=args.cond, seed=0)
@@ -36,10 +37,10 @@ for lam in lams:
     setup_time = 0.0
     s = 0
 
-    if args.precond == "gaussian":
+    if args.precond in ("gaussian", "sparse"):
         s = args.s_factor * args.d
         t0 = time.perf_counter()
-        apply_Minv = make_sketch_preconditioner(X, lam, s, seed=1)
+        apply_Minv = make_sketch_preconditioner(X, lam, s, seed=1, kind=args.precond, zeta=args.zeta)
         setup_time = time.perf_counter() - t0
 
     else:
@@ -68,4 +69,5 @@ for lam in lams:
         "s": s,
         "setup_time": setup_time,
         "solve_time": solve_time,
+        "zeta": args.zeta if args.precond == "sparse" else None
     }))
