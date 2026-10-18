@@ -17,14 +17,16 @@ if len(problems) != 1:
     raise ValueError("All arms must use the same n, d, and cond")
 n, d, cond = problems.pop()
 
-# Group rows by arm: (preconditioner, sketch size)
+# Group rows by arm: (preconditioner, sketch size, zeta)
 arms = {}
 for r in rows:
-    arms.setdefault((r["precond"], r["s"]), []).append(r)
+    arms.setdefault((r["precond"], r["s"], r.get("zeta")), []).append(r)
 
 fig, (ax_iters, ax_time) = plt.subplots(1, 2, figsize=(12, 4.5))
 
-for (precond, s), group in sorted(arms.items()):
+markers = ["o", "s", "^", "v", "D"]
+
+for i, ((precond, s, zeta), group) in enumerate(sorted(arms.items(), key=lambda item: (item[0][0], item[0][1], item[0][2] or 0))):
     # Log axes cannot show λ = 0
     group = sorted((r for r in group if r["lambda"] > 0), key=lambda r: r["lambda"])
 
@@ -32,13 +34,21 @@ for (precond, s), group in sorted(arms.items()):
     iters = [r["iters"] for r in group]
     total = [r["setup_time"] + r["solve_time"] for r in group]
 
-    label = "none" if precond == "none" else f"Gaussian, s = {s // d}d"
+    if precond == "none":
+        label = "none"
+    elif precond == "gaussian":
+        label = f"Gaussian, s = {s // d}d"
+    else:
+        label = f"sparse, s = {s // d}d, ζ = {zeta}"
 
-    line, = ax_iters.plot(lams, iters, marker="o", label=label)
+    marker = markers[i % len(markers)]
+    style = dict(marker=marker, markersize=6)
+
+    line, = ax_iters.plot(lams, iters, label=label, **style)
     color = line.get_color()
-    ax_time.plot(lams, total, marker="o", color=color, label=label)
+    ax_time.plot(lams, total, color=color, label=label, **style)
 
-    if precond == "gaussian":
+    if precond != "none":
         setup = np.median([r["setup_time"] for r in group])
         ax_time.axhline(setup, color=color, linestyle="--", alpha=0.4)
 
@@ -67,7 +77,7 @@ ax_time.set_ylabel("Setup + solve time (s)")
 ax_time.legend()
 
 fig.tight_layout()
-output = Path("figures/precond.png")
+output = Path("figures/precond_sparse.png")
 output.parent.mkdir(exist_ok=True)
 fig.savefig(output, dpi=150, bbox_inches="tight")
 plt.close(fig)
