@@ -327,3 +327,17 @@ The likely reason is coherence. The worst-case guarantees are driven by matrices
 **Wall-time crossover: confirmed.** With `ζ = 1`, plain CG is faster only at `λ = 1` (0.065 s against 0.087 s); the two tie near `λ ≈ 0.3`, and preconditioned CG is faster at every smaller `λ`. The prediction was `λ ≈ 1e-2` or above. At `λ = 0`, sparse preconditioning is 59× faster end to end than plain CG.
 
 Solve times vary by up to about 25% between arms with identical iteration counts (0.33 s against 0.42 s), which is run-to-run machine variation. Therefore, iteration counts are the reliable comparison.
+
+### Prediction: sketch quality across seeds
+
+The sparse-sketch sweep found `ζ = 1` as effective as a Gaussian sketch, but on the evidence of one sketch draw per arm and iteration counts, which are a coarse measure: CG iterations grow roughly like `√κ`, so a preconditioner with a 20% higher condition number would cost only about 10% more iterations, which at 58 iterations is within single-draw variation. This experiment measures `κ(M⁻¹A)` directly.
+
+Setup: the same problem as the sweeps (`n = 20000`, `d = 500`, `cond = 1e6`), `λ = 0`, `s = 2d`, 30 independent sketch draws per arm, for the Gaussian sketch and sparse sign sketches with `ζ = 1, 2, 4`.
+
+Prediction, recorded before measurement:
+
+1. The Gaussian arm's mean `κ(M⁻¹A)` lies near, and somewhat below, the asymptotic estimate of 34, as the `s = 4d` test (7.7 against a predicted 9) came in below its estimate.
+2. `ζ = 2` and `ζ = 4` match the Gaussian mean within two standard errors.
+3. `ζ = 1` also matches the Gaussian mean within two standard errors, so the single-draw sweep result holds.
+
+"Matches" means the difference in means is within two standard errors of zero. A difference that is statistically clear but small, such as under 10% in `κ`, would still be reported as a real but practically minor penalty.
