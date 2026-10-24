@@ -341,3 +341,29 @@ Prediction, recorded before measurement:
 3. `ζ = 1` also matches the Gaussian mean within two standard errors, so the single-draw sweep result holds.
 
 "Matches" means the difference in means is within two standard errors of zero. A difference that is statistically clear but small, such as under 10% in `κ`, would still be reported as a real but practically minor penalty.
+
+#### Result
+
+Run: `scripts/sketch_quality.py` (n = 20000, d = 500, s = 2d, κ(XᵀX) = 1e6, λ = 0), 30 seeds per arm. Data: `results/final/sketch_quality.jsonl`.
+
+| arm            | mean κ(M⁻¹A) | SD   | SE   | diff vs Gaussian | diff / SE_combined |
+|----------------|--------------|------|------|------------------|--------------------|
+| Gaussian       | 32.24        | 0.99 | 0.18 | —                | —                  |
+| sparse, ζ = 1  | 32.29        | 1.11 | 0.20 | +0.05 (+0.2%)    | 0.19               |
+| sparse, ζ = 2  | 32.51        | 1.22 | 0.22 | +0.27 (+0.8%)    | 0.94               |
+| sparse, ζ = 4  | 32.66        | 1.36 | 0.25 | +0.41 (+1.3%)    | 1.34               |
+
+All three predictions were confirmed:
+
+1. The Gaussian mean (32.2) is close to the asymptotic estimate ((1 + √(d/s)) / (1 − √(d/s)))² ≈ 34.0 and slightly below it.
+2. ζ = 2 and ζ = 4 are within two standard errors of the Gaussian mean.
+3. ζ = 1 is within two standard errors as well, and it is the closest of the three (0.19 SE). Every difference is far below the 10% threshold for a practical difference.
+
+This rules out the concern that iteration counts were too coarse to detect a ζ = 1 penalty. Measuring κ directly, the experiment could have detected a difference of about 0.55 (two combined standard errors, ≈ 1.7% of κ), and none appeared.
+
+Things this data does not support:
+
+- The means go up with ζ (32.29 → 32.51 → 32.66), but every step is within noise. This shows no detectable difference.
+- The sparse arms have slightly larger spreads (SD 1.1–1.4 vs 0.99) and a few high draws (37.3 at ζ = 2, 36.4 at ζ = 4). With 30 draws this is an observation, not a finding.
+
+Scope: this is one fixed X with Haar-random singular vectors, so it is incoherent by construction. Sparse sketches with small ζ are known to do worse on coherent matrices, so this result does not show that ζ = 1 is generally as good as a Gaussian sketch. The coherent-matrix experiment would test that.
