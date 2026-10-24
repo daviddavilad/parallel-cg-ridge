@@ -73,3 +73,18 @@ def make_sketch_preconditioner(X, lam, s, seed=0, kind="gaussian", zeta=2):
         return u
 
     return apply_Minv
+
+def preconditioned_condition_number(A, apply_Minv):
+    """
+    Compute the spectral condition number of M^{-1}A.
+
+    M^{-1}A is similar to an SPD matrix when A and M are SPD,
+    so its eigenvalues are real and positive in exact arithmetic.
+    """
+    d = A.shape[0]
+
+    MinvA = np.column_stack([apply_Minv(A[:, j]) for j in range(d)])
+
+    ev = np.sort(np.abs(np.linalg.eigvals(MinvA)))
+
+    return float(ev[-1] / ev[0])
