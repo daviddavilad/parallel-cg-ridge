@@ -367,3 +367,22 @@ Things this data does not support:
 - The sparse arms have slightly larger spreads (SD 1.1–1.4 vs 0.99) and a few high draws (37.3 at ζ = 2, 36.4 at ζ = 4). With 30 draws this is an observation, not a finding.
 
 Scope: this is one fixed X with Haar-random singular vectors, so it is incoherent by construction. Sparse sketches with small ζ are known to do worse on coherent matrices, so this result does not show that ζ = 1 is generally as good as a Gaussian sketch. The coherent-matrix experiment would test that.
+
+### Conditioning or precision? The plateau at cond = 1e4
+
+The unpreconditioned sweep at `cond = 1e6` flattens below `λ ≈ 1e-7`. Two explanations fit:
+
+- **Conditioning.** Once `λ ≪ σ²_min = 1/cond`, adding `λ` no longer changes `κ(A) = (1 + λ)/(1/cond + λ)`, so the iteration count stops changing. The plateau location scales with `1/cond`.
+- **Precision.** If arithmetic were single precision, `λp` would be lost to rounding once `λ` fell below roughly `ε_single · ‖XᵀX‖ ≈ 6e-8`. The plateau location would be fixed by machine epsilon, independent of `cond`.
+
+At `cond = 1e6` both explanations put the plateau near `1e-7`, so that sweep cannot tell them apart. The solver runs in float64 (`ε ≈ 1e-16`), so the precision explanation is not expected to apply. This experiment tests that directly.
+
+Run: `scripts/lambda_sweep.py --cond 1e4 --precond none`, same `n`, `d`, `λ` grid, tolerance, and seed as the `cond = 1e6` sweep.
+
+Prediction:
+
+1. **Location.** The plateau moves to `σ²_min = 1e-4`. Using the shape of the `cond = 1e6` curve, iterations at `λ = 1e-4` are about 75% of the plateau value, and are flat (within 3%) for `λ ≲ 3e-6`.
+2. **Height.** The plateau is at `κ(A) ≈ 1e4`. The `cond = 1e6` sweep needed about 630 iterations at `κ ≈ 1e4` (`λ = 1e-4`), so the plateau should be roughly 450–800 iterations, about 7x below the `cond = 1e6` plateau of ~4,370.
+3. **Large λ.** For `λ ≳ 1e-2`, `κ(A)` is nearly the same for both values of `cond`, so iteration counts agree within about 10%.
+
+Falsification: if the `cond = 1e4` sweep stays on the `cond = 1e6` curve down to `λ ≈ 1e-7` and flattens there, the plateau is set by precision, not conditioning.
