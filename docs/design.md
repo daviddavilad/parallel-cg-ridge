@@ -386,3 +386,28 @@ Prediction:
 3. **Large λ.** For `λ ≳ 1e-2`, `κ(A)` is nearly the same for both values of `cond`, so iteration counts agree within about 10%.
 
 Falsification: if the `cond = 1e4` sweep stays on the `cond = 1e6` curve down to `λ ≈ 1e-7` and flattens there, the plateau is set by precision, not conditioning.
+
+#### Result
+
+Run: `scripts/lambda_sweep.py --cond 1e4 --precond none`, same `n`, `d`, `λ` grid, tolerance, and seed as the `cond = 1e6` sweep. Data: `results/final/lambda_sweep_none_cond1e4.jsonl`.
+
+The plateau moves with `cond`. The conditioning explanation is confirmed and the precision explanation is refuted.
+
+**Location: confirmed.** The plateau is about 721 iterations.
+
+| λ               | iterations | % of plateau |
+|-----------------|------------|--------------|
+| 1e-4 (= σ²_min) | 532        | 74%          |
+| 1e-5            | 690        | 96%          |
+| 3e-6            | 708        | 98%          |
+| ≤ 1e-6          | 713–722    | flat         |
+
+The prediction was about 75% at `σ²_min` and flat within 3% below `3e-6`. Under the precision explanation, at `λ = 1e-5` this run would still follow the `cond = 1e6` curve, at about 1,600 iterations. It took 690.
+
+**Height: confirmed.** The plateau of 721 is inside the predicted 450–800 range. The ratio to the `cond = 1e6` plateau (~4,370) is 6.1x, a little below the predicted ~7x. That corresponds to an effective slope of about 0.39 between the two plateaus.
+
+**Large λ: confirmed.** For `λ ≥ 1e-2`, iteration counts differ by 0–5.5% between the two sweeps.
+
+**Observation.** For `λ ≤ 1e-2`, the `cond = 1e4` problem needs a few percent more iterations than the `cond = 1e6` problem at equal or slightly smaller `κ(A)`. The same holds at the plateau: 721 iterations at `κ = 1e4`, against 626 when the `cond = 1e6` problem had `κ ≈ 1e4` (`λ = 1e-4`). A plausible explanation is the shape of the spectrum. Eigenvalues of `XᵀX` below `λ` cluster near `λ` once it is added, and CG handles a tight cluster almost like a single eigenvalue. At `λ = 1e-2`, about 67% of the `cond = 1e6` spectrum is in that cluster, against 50% for `cond = 1e4`. The `√κ` bound is worst-case and ignores how the eigenvalues are distributed. This is a hypothesis and has not been tested.
+
+**Iterations exceed `d` at moderate conditioning.** The plateau of 721 is above `d = 500` even at `κ = 1e4`, so loss of orthogonality (Greenbaum 1989) affects convergence at moderate conditioning too, not only at `κ = 1e6`.
