@@ -411,3 +411,48 @@ The prediction was about 75% at `σ²_min` and flat within 3% below `3e-6`. Unde
 **Observation.** For `λ ≤ 1e-2`, the `cond = 1e4` problem needs a few percent more iterations than the `cond = 1e6` problem at equal or slightly smaller `κ(A)`. The same holds at the plateau: 721 iterations at `κ = 1e4`, against 626 when the `cond = 1e6` problem had `κ ≈ 1e4` (`λ = 1e-4`). A plausible explanation is the shape of the spectrum. Eigenvalues of `XᵀX` below `λ` cluster near `λ` once it is added, and CG handles a tight cluster almost like a single eigenvalue. At `λ = 1e-2`, about 67% of the `cond = 1e6` spectrum is in that cluster, against 50% for `cond = 1e4`. The `√κ` bound is worst-case and ignores how the eigenvalues are distributed. This is a hypothesis and has not been tested.
 
 **Iterations exceed `d` at moderate conditioning.** The plateau of 721 is above `d = 500` even at `κ = 1e4`, so loss of orthogonality (Greenbaum 1989) affects convergence at moderate conditioning too, not only at `κ = 1e6`.
+
+### Design: distributed sketch-preconditioned CG
+
+The serial preconditioner builds `R` from the QR of `[SX; √λ I]`. To distribute it, split the sketch by columns to match the row partition of `X`: `S = [S_1 | S_2 | … | S_P]`, where `S_r` is `s × n_r`. Then SX = Σ_r S_r X_r
+
+Setup on each rank:
+
+1. Compute `S_r X_r` (`s × d`) locally.
+2. `Allreduce` the partial sketches, so every rank holds `SX`.
+3. Compute the QR of `[SX; √λ I]` locally, so every rank holds its own copy of `R`.
+
+`apply_Minv` is two triangular solves with `R` on replicated `d`-vectors, so it needs no communication. PCG still performs exactly one `Allreduce` per iteration, inside the operator. The preconditioner adds one `Allreduce` in total, during setup.
+
+#### Decision: sparse sketches only
+
+A Gaussian `S_r` is `s × n_r`, which for `s = 2d` is twice the size of `X_r`, and computing `S_r X_r` costs `O(s n_r d)`, the compute of roughly `d` CG iterations. A sparse sign sketch costs `O(ζ n_r d)`, under one iteration. The sketch-quality experiment found `ζ = 1` as effective as a Gaussian sketch on this problem, so dropping the Gaussian option costs nothing measurable.
+
+#### Decision: the same sketch for every P
+
+If each rank drew its own random sketch, `S` would change with `P`, and so would `κ(M⁻¹A)` and the iteration count, confounding the strong-scaling measurements. Instead, rank 0 generates the global `positions` (`n × ζ`) and `signs` and scatters them with `X`. This adds `O(nζ)` data, small next to `X`'s `O(nd)`, and makes `S` identical for every `P`. Each rank builds its `S_r` as a sparse `s × n_r` matrix from its slice.
+
+#### Decision: every rank computes the QR
+
+The QR of the `(s + d) × d` matrix costs `O(sd²)` and is independent of `n` and `P`. Computing it on every rank avoids a second communication step (QR on rank 0, then broadcast `R`). The cost is a serial term in setup that does not shrink with `P`. A communication-avoiding tall-skinny QR (TSQR) would distribute it, but is out of scope here.
+
+#### Setup cost
+
+| component           | cost              | scales with P      |
+|---------------------|-------------------|--------------------|
+| local sketch        | `O(ζ n d / P)`    | shrinks as `1/P`   |
+| `Allreduce` of `SX` | `s·d` doubles     | grows as `log P`   |
+| QR                  | `O(s d²)`         | constant (serial)  |
+
+For `d = 500`, `s = 2d`: the `Allreduce` moves `5×10⁵` doubles (4 MB) once, and the QR is about `7×10⁸` flops on every rank. As `P` grows, the local sketch shrinks and the QR remains, so setup time should approach a floor set by the QR.
+
+#### Correctness test
+
+For the same `positions`, `signs`, and `λ`, the distributed `apply_Minv` must match the serial one to about `1e-12` for any `P`. The test compares `M⁻¹r`, not `R`, because `R` is unique only up to the signs of its rows.
+
+Interface:
+
+    make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm)
+        -> apply_Minv, timings {"sketch", "comm", "qr"}
+
+This requires refactoring the serial `make_sketch_preconditioner` to accept `positions` and `signs` as arguments, so both versions can use the same sketch.
