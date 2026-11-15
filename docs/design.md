@@ -455,4 +455,4 @@ Interface:
     make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm)
         -> apply_Minv, timings {"sketch", "comm", "qr"}
 
-This requires refactoring the serial `make_sketch_preconditioner` to accept `positions` and `signs` as arguments, so both versions can use the same sketch.
+The serial and distributed implementations share three helpers: `sparse_sign_sketch` generates positions and signs, `sparse_sign_matrix` constructs the corresponding CSC matrix from global or local arrays, and `qr_preconditioner` constructs the inverse preconditioner from the completed sketch product. The serial function retains its existing signature, and the distributed implementation scatters the generated positions and signs across ranks. The refactored serial function produces bitwise-identical `M⁻¹r` for the same seed (checked for `ζ = 1` and `ζ = 2`), so all earlier results stay reproducible from the current code.
