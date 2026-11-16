@@ -45,51 +45,52 @@ for zeta in (1, 2):
     signs_local = scatter_rows(signs, comm)
 
     for lam in (0.0, 1e-3):
+        for qr_mode in ("replicated", "root"):
 
-        # Construct the distributed preconditioner.
-        apply_Minv, _ = make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm)
+            # Construct the distributed preconditioner.
+            apply_Minv, _ = make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm, qr=qr_mode)
 
-        u = apply_Minv(r)
+            u = apply_Minv(r)
 
-        # Gather the results from every rank.
-        us = comm.gather(u, root=0)
+            # Gather the results from every rank.
+            us = comm.gather(u, root=0)
 
-        status = None
+            status = None
 
-        if rank == 0:
-            # Serial reference using the exact same sketch.
-            S = sparse_sign_matrix(positions, signs, s)
-            SX = S @ X
+            if rank == 0:
+                # Serial reference using the exact same sketch.
+                S = sparse_sign_matrix(positions, signs, s)
+                SX = S @ X
 
-            apply_Minv_ref = qr_preconditioner(SX, lam)
-            u_ref = apply_Minv_ref(r)
+                apply_Minv_ref = qr_preconditioner(SX, lam)
+                u_ref = apply_Minv_ref(r)
 
-            # Check 1: distributed vs serial.
-            serial_ok = np.allclose(u, u_ref, rtol=1e-12, atol=0)
+                # Check 1: distributed vs serial.
+                serial_ok = np.allclose(u, u_ref, rtol=1e-12, atol=0)
 
-            rel_err = (np.linalg.norm(u - u_ref) / np.linalg.norm(u_ref))
+                rel_err = (np.linalg.norm(u - u_ref) / np.linalg.norm(u_ref))
 
-            # Check 2: all MPI ranks agree bitwise.
-            ranks_ok = all(np.array_equal(us[0], other) for other in us[1:])
+                # Check 2: all MPI ranks agree bitwise.
+                ranks_ok = all(np.array_equal(us[0], other) for other in us[1:])
 
-            status = (serial_ok, ranks_ok, rel_err)
+                status = (serial_ok, ranks_ok, rel_err)
 
-        # Give every rank the same result before asserting.
-        serial_ok, ranks_ok, rel_err = comm.bcast(status, root=0)
+            # Give every rank the same result before asserting.
+            serial_ok, ranks_ok, rel_err = comm.bcast(status, root=0)
 
-        assert serial_ok, (
-            f"Serial mismatch: zeta={zeta}, "
-            f"lam={lam}, rel_err={rel_err:.3e}"
-        )
-
-        assert ranks_ok, (
-            f"MPI ranks disagree: zeta={zeta}, lam={lam}"
-        )
-
-        if rank == 0:
-            print(
-                f"P={comm.Get_size()}, "
-                f"zeta={zeta}, lam={lam:g}: "
-                f"PASS (rel_err={rel_err:.3e}, ranks bitwise equal)",
-                flush=True,
+            assert serial_ok, (
+                f"Serial mismatch: qr={qr_mode}, zeta={zeta}, "
+                f"lam={lam}, rel_err={rel_err:.3e}"
             )
+
+            assert ranks_ok, (
+                f"MPI ranks disagree: qr={qr_mode}, zeta={zeta}, lam={lam}"
+            )
+
+            if rank == 0:
+                print(
+                    f"P={comm.Get_size()}, "
+                    f"qr={qr_mode}, zeta={zeta}, lam={lam:g}: "
+                    f"PASS (rel_err={rel_err:.3e}, ranks bitwise equal)",
+                    flush=True,
+                )

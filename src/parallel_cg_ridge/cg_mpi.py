@@ -3,7 +3,12 @@ import numpy as np
 from mpi4py import MPI
 from mpi4py.util.dtlib import from_numpy_dtype
 
-from .precond import sparse_sign_matrix, qr_preconditioner
+from .precond import (
+    sparse_sign_matrix,
+    qr_preconditioner,
+    sketch_qr_factor,
+    triangular_preconditioner,
+)
 
 def row_partition(n: int, comm) -> tuple[int, int]:
     """Return the [start, stop) row range owned by this MPI rank."""
@@ -127,18 +132,23 @@ def assemble_rhs(X_local, y_local, comm):
     comm.Allreduce(partial, b, op=MPI.SUM)
     return b
 
-def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm):
+def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm, qr="replicated"):
     """
     Construct a distributed sparse-sign ridge preconditioner.
 
-    The sketch is supplied externally and is independent of rank count.
+    qr="replicated": Allreduce SX, then QR on every rank.
+    qr="root": Reduce SX, QR on rank 0, broadcast R.
 
     Returns (apply_Minv, timings).
     """
     n_local, d = X_local.shape
+    rank = comm.Get_rank()
 
     if s < d:
         raise ValueError("s must be at least d")
+
+    if qr not in ("replicated", "root"):
+        raise ValueError("qr must be 'replicated' or 'root'")
 
     if positions_local.shape != signs_local.shape:
         raise ValueError("positions and signs must have matching shapes")
@@ -156,21 +166,40 @@ def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, sig
     sketch_time = MPI.Wtime() - t0
 
     # Global sketch assembly
-    SX = np.empty_like(partial)
-
     t0 = MPI.Wtime()
 
-    comm.Allreduce(partial, SX, op=MPI.SUM)
+    if qr == "replicated":
+        SX = np.empty_like(partial)
+        comm.Allreduce(partial, SX, op=MPI.SUM)
+    else:
+        SX = np.empty_like(partial) if rank == 0 else None
+        comm.Reduce(partial, SX, op=MPI.SUM, root=0)
 
     comm_time = MPI.Wtime() - t0
 
-    # Replicated QR factorization
-    t0 = MPI.Wtime()
+    # QR factorization
+    qr_time = 0.0
+    bcast_time = 0.0
 
-    apply_Minv = qr_preconditioner(SX, lam)
+    if qr == "replicated":
+        t0 = MPI.Wtime()
+        apply_Minv = qr_preconditioner(SX, lam)
+        qr_time = MPI.Wtime() - t0
 
-    qr_time = MPI.Wtime() - t0
+    else:
+        if rank == 0:
+            t0 = MPI.Wtime()
+            R = np.ascontiguousarray(sketch_qr_factor(SX, lam))
+            qr_time = MPI.Wtime() - t0
+        else:
+            R = np.empty((d, d), dtype=X_local.dtype)
 
-    timings = {"sketch": sketch_time, "comm": comm_time, "qr": qr_time}
+        t0 = MPI.Wtime()
+        comm.Bcast(R, root=0)
+        bcast_time = MPI.Wtime() - t0
+
+        apply_Minv = triangular_preconditioner(R)
+
+    timings = {"sketch": sketch_time, "comm": comm_time, "qr": qr_time, "bcast": bcast_time}
 
     return apply_Minv, timings

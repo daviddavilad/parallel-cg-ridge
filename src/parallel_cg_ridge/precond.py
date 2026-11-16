@@ -7,12 +7,12 @@ from scipy.sparse import csc_matrix
 def sparse_sign_sketch(n, s, zeta, rng):
     """Draw a sparse sign sketch in column-oriented array form.
 
-    Returns ``(positions, signs)``, both with shape ``(n, zeta)``.
-    Row ``j`` of each array describes column ``j`` of the sketch matrix:
-    ``positions[j]`` contains distinct row indices in ``[0, s)``, and
-    ``signs[j]`` contains *unscaled* independent values from ``{-1, +1}``.
-    The normalization ``1 / sqrt(zeta)`` is applied by
-    ``sparse_sign_matrix``, not here.
+    Returns (positions, signs), both with shape (n, zeta).
+    Row j of each array describes column j of the sketch matrix:
+    positions[j] contains distinct row indices in [0, s), and
+    signs[j] contains *unscaled* independent values from {-1, +1}.
+    The normalization 1 / sqrt(zeta) is applied by
+    sparse_sign_matrix, not here.
 
     Positions (including collision resampling) are drawn before signs to
     preserve the established seed-to-sketch mapping.
@@ -37,7 +37,7 @@ def sparse_sign_sketch(n, s, zeta, rng):
     return positions, signs
 
 def sparse_sign_matrix(positions, signs, s):
-    """Build an ``s x n_local`` CSC sketch from aligned column-wise arrays."""
+    """Build an s x n_local CSC sketch from aligned column-wise arrays."""
     n_local, zeta = positions.shape
 
     rows = positions.ravel()
@@ -46,31 +46,38 @@ def sparse_sign_matrix(positions, signs, s):
 
     return csc_matrix((vals, (rows, cols)), shape=(s, n_local))
 
-def qr_preconditioner(SX, lam):
-    """Return an inverse-operator callback for ``M = R.T @ R``."""
+def sketch_qr_factor(SX, lam):
+    """Compute the triangular factor R of the sketch preconditioner."""
     if lam < 0:
         raise ValueError("lam must be non-negative")
 
     d = SX.shape[1]
     B = np.vstack([SX, np.sqrt(lam) * np.eye(d)])
-    R = np.linalg.qr(B, mode="r")
 
+    return np.linalg.qr(B, mode="r")
+
+def triangular_preconditioner(R):
+    """Return an inverse-operator callback for M = R.T @ R."""
     def apply_Minv(r):
         z = solve_triangular(R, r, lower=False, trans="T")
-        
+
         return solve_triangular(R, z, lower=False)
 
     return apply_Minv
 
+def qr_preconditioner(SX, lam):
+    """Construct the QR factorization and return the preconditioner."""
+    return triangular_preconditioner(sketch_qr_factor(SX, lam))
+
 def make_sketch_preconditioner(X, lam, s, seed=0, kind="gaussian", zeta=2):
     """Return a Gaussian or sparse-sign sketch-based ridge preconditioner.
 
-    For ``kind='sparse'``, each sketch column has ``zeta`` nonzeros
-    of magnitude ``1/sqrt(zeta)`` at distinct row positions.
-    ``zeta=1`` is CountSketch.
+    For kind='sparse', each sketch column has zeta nonzeros
+    of magnitude 1/sqrt(zeta) at distinct row positions.
+    zeta=1 is CountSketch.
 
-    The returned callback applies ``M^{-1}``, where
-    ``M = R.T @ R`` approximates ``X.T @ X + lam * I``.
+    The returned callback applies M^{-1}, where
+    M = R.T @ R approximates X.T @ X + lam * I.
     """
     n, d = X.shape
 
