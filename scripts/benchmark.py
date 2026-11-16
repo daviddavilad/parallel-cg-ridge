@@ -1,19 +1,29 @@
 import argparse
-import numpy as np
 import json
 import os
 import sys
 
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
+import numpy as np  # must come after
+
 from mpi4py import MPI
-from parallel_cg_ridge.cg import cg
+from parallel_cg_ridge.cg import (
+    cg, 
+    pcg,
+)
 from parallel_cg_ridge.cg_mpi import (
     assemble_rhs,
     make_distributed_ridge_operator,
     make_split_ridge_operator,
     scatter_rows,
+    make_distributed_sketch_preconditioner,
 )
 from parallel_cg_ridge.data import make_ridge_problem
 from parallel_cg_ridge.pipelined import pipelined_cg
+from parallel_cg_ridge.precond import sparse_sign_sketch
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
@@ -29,6 +39,7 @@ if sys.platform == "linux":
 else:
     cpus = []
 
+# Arguments
 parser = argparse.ArgumentParser()
 parser.add_argument("--n", type=int, default=100_000)
 parser.add_argument("--d", type=int, default=200)
@@ -37,8 +48,27 @@ parser.add_argument("--cond", type=float, default=100.0)
 parser.add_argument("--warmup", type=int, default=1)
 parser.add_argument("--reps", type=int, default=5)
 parser.add_argument("--solver", choices=["cg", "pipelined"], default="cg")
+parser.add_argument("--precond", choices=["none", "sparse"], default="none")
+parser.add_argument("--s_factor", type=int, default=2)
+parser.add_argument("--zeta", type=int, default=1)
+
 args = parser.parse_args()
 
+if args.precond != "none" and args.solver == "pipelined":
+    parser.error("preconditioning is only implemented for --solver cg")
+
+if args.reps < 1 or args.warmup < 0:
+    parser.error("--reps must be positive and --warmup non-negative")
+
+s = args.s_factor * args.d if args.precond == "sparse" else 0
+
+if args.precond == "sparse":
+    if args.s_factor < 1:
+        parser.error("--s_factor must be at least 1")
+    if not (1 <= args.zeta <= s // 2):
+        parser.error("--zeta must be between 1 and s // 2")
+
+# Generate and distribute the problem
 if rank == 0:
     X, y, _ = make_ridge_problem(n=args.n, d=args.d, cond=args.cond, seed=0)
 else:
@@ -48,54 +78,137 @@ X_local = scatter_rows(X, comm)
 y_local = scatter_rows(y, comm)
 del X, y
 
+# Generate and distribute a fixed sparse sketch
+if args.precond == "sparse":
+    if rank == 0:
+        positions, signs = sparse_sign_sketch(args.n, s, args.zeta, np.random.default_rng(1))
+    else:
+        positions, signs = None, None
+
+    positions_local = scatter_rows(positions, comm)
+    signs_local = scatter_rows(signs, comm)
+
+    del positions, signs
+else:
+    positions_local = None
+    signs_local = None
+
+# Set up the matrix-free operator
 if args.solver == "cg":
     apply_A, timings = make_distributed_ridge_operator(X_local, args.lam, comm)
-
-    def solve():
-        return cg(apply_A, b, tol=1e-10, maxiter=10 * args.d)
 else:
     start_A, finish_A, timings = make_split_ridge_operator(X_local, args.lam, comm)
 
-    def solve():
-        return pipelined_cg(start_A, finish_A, b, tol=1e-10, maxiter=10 * args.d)
-
 b = assemble_rhs(X_local, y_local, comm)
 
+# Preconditioner setup and solve
+def setup():
+    if args.precond == "none":
+        return None, {"sketch": 0.0, "comm": 0.0, "qr": 0.0}
+
+    return make_distributed_sketch_preconditioner(X_local, args.lam, s, positions_local, signs_local, comm)
+
+
+def timed(f):
+    """Time applications of the inverse preconditioner."""
+    def wrapped(r):
+        t0 = MPI.Wtime()
+        out = f(r)
+        timings["precond"] += MPI.Wtime() - t0
+        return out
+
+    return wrapped
+
+
+def solve(apply_Minv):
+    maxiter = 10 * args.d
+    tol = 1e-10
+
+    if args.solver == "pipelined":
+        return pipelined_cg(start_A, finish_A, b, tol=tol, maxiter=maxiter)
+
+    if apply_Minv is None:
+        # Preserve the original unpreconditioned CG path.
+        return cg(apply_A, b, tol=tol, maxiter=maxiter)
+
+    return pcg(apply_A, timed(apply_Minv), b, tol=tol, maxiter=maxiter)
+
+
+def reset_timings():
+    timings.update(compute=0.0, comm=0.0, calls=0, precond=0.0)
+
+# Warmup
 for _ in range(args.warmup):
-    timings.update(compute=0.0, comm=0.0, calls=0)
-    solve()
+    reset_timings()
+    apply_Minv, _ = setup()
+    solve(apply_Minv)
 
 cpus_per_rank = comm.gather(cpus, root=0)
 
-comm.Barrier()
-
+# Timed repetitions
 records = []
 
 for _ in range(args.reps):
-    timings.update(compute=0.0, comm=0.0, calls=0)
+    reset_timings()
+
+    # Phase 1: preconditioner setup
     comm.Barrier()
 
     t0 = MPI.Wtime()
-    w, iters, res, converged = solve()
-    t1 = MPI.Wtime()
+    apply_Minv, setup_timings = setup()
+    setup_wall = MPI.Wtime() - t0
 
-    wall = t1 - t0
-    walls = comm.gather(wall, root=0)
+    if args.precond == "none":
+        setup_wall = 0.0
+
+    # Phase 2: iterative solve
+    comm.Barrier()
+
+    t0 = MPI.Wtime()
+    w, iters, res, converged = solve(apply_Minv)
+    solve_wall = MPI.Wtime() - t0
+
+    # Gather rank-local measurements.
+    setup_walls = comm.gather(setup_wall, root=0)
+    solve_walls = comm.gather(solve_wall, root=0)
+
     comps = comm.gather(timings["compute"], root=0)
     comms = comm.gather(timings["comm"], root=0)
+    precond_times = comm.gather(timings["precond"], root=0)
+
+    sketches = comm.gather(setup_timings["sketch"], root=0)
+    setup_comms = comm.gather(setup_timings["comm"], root=0)
+    qrs = comm.gather(setup_timings["qr"], root=0)
+
+    iteration_counts = comm.gather(iters, root=0)
+    convergence_flags = comm.gather(converged, root=0)
 
     if rank == 0:
+        max_setup = max(setup_walls)
+        max_solve = max(solve_walls)
+
         records.append({
-            "wall": max(walls),
+            "wall": max_solve,
+            "setup_wall": max_setup,
+            "total_wall": max_setup + max_solve,
             "compute": max(comps),
             "comm": max(comms),
+            "precond_time": max(precond_times),
+            "sketch": max(sketches),
+            "setup_comm": max(setup_comms),
+            "qr": max(qrs),
             "compute_per_rank": comps,
             "comm_per_rank": comms,
-            "iters": iters,
-            "converged": converged,
+            "iters": max(iteration_counts),
+            "converged": all(convergence_flags),
+            "ranks_agree": len(set(iteration_counts)) == 1,
         })
 
+# Summary output
 if rank == 0:
+    def median(field):
+        return float(np.median([r[field] for r in records]))
+
     result = {
         "P": size,
         "n": args.n,
@@ -103,14 +216,31 @@ if rank == 0:
         "lam": args.lam,
         "cond": args.cond,
         "reps": args.reps,
-        "wall": float(np.median([r["wall"] for r in records])),
-        "compute": float(np.median([r["compute"] for r in records])),
-        "comm": float(np.median([r["comm"] for r in records])),
+        "solver": args.solver,
+        "precond": args.precond,
+        "s": s,
+        "zeta": args.zeta if args.precond == "sparse" else None,
+
+        # Solve-time metrics (existing meaning preserved)
+        "wall": median("wall"),
+        "compute": median("compute"),
+        "comm": median("comm"),
+
+        # New setup and preconditioning metrics
+        "setup_wall": median("setup_wall"),
+        "total_wall": median("total_wall"),
+        "sketch": median("sketch"),
+        "setup_comm": median("setup_comm"),
+        "qr": median("qr"),
+        "precond_time": median("precond_time"),
+
         "compute_per_rank": np.median([r["compute_per_rank"] for r in records], axis=0).tolist(),
         "comm_per_rank": np.median([r["comm_per_rank"] for r in records], axis=0).tolist(),
+
         "iters": records[0]["iters"],
         "converged": all(r["converged"] for r in records),
+        "ranks_agree": all(r["ranks_agree"] for r in records),
         "cpus_per_rank": cpus_per_rank,
-        "solver": args.solver
     }
+
     print(json.dumps(result))
