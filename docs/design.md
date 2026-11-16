@@ -434,7 +434,7 @@ If each rank drew its own random sketch, `S` would change with `P`, and so would
 
 #### Decision: every rank computes the QR
 
-The QR of the `(s + d) × d` matrix costs `O(sd²)` and is independent of `n` and `P`. Computing it on every rank avoids a second communication step (QR on rank 0, then broadcast `R`). The cost is a serial term in setup that does not shrink with `P`. A communication-avoiding tall-skinny QR (TSQR) would distribute it, but is out of scope here.
+The QR of the `(s + d) × d` matrix costs `O(sd²)` and is independent of `n` and `P`. Computing it on every rank avoids a second communication step (QR on rank 0, then broadcast `R`). The cost is a serial term in setup that does not shrink with `P`. Distributing this QR is not worthwhile. TSQR needs local blocks with at least `d` rows, and `[SX; √λ I]` is only `3d × d`, so at `P = 32` each block would have about 47 rows. Each level of the TSQR reduction tree also factors a `2d × d` stack at about the cost of the full QR. The better options are to factor once and broadcast `R`, or to share one `R` per node.
 
 #### Setup cost
 
@@ -459,7 +459,7 @@ The serial and distributed implementations share three helpers: `sparse_sign_ske
 
 ### Prediction: strong scaling of distributed sketch-preconditioned CG
 
-Run: `scripts/precond_scaling_carc.sh`, Hopper, one node, P = 1, 2, 4, 8, 16, 32. `d = 500`, `cond = 1e6`, `λ = 0`, sparse sign sketch with `s = 2d`, `ζ = 1`, sketch seed fixed so `S` is identical for every `P`. Two problem sizes: `n = 50,000` and `n = 500,000`.
+Run: `scripts/precond_scaling_carc.sh`, Hopper, one node, P = 1, 2, 4, 8, 16, 32. `d = 500`, `cond = 1e6`, `λ = 0`, sparse sign sketch with `s = 2d`, `ζ = 1`, sketch seed fixed so `S` is identical for every `P`. Two problem sizes: `n = 50,000` and `n = 500,000`. We run three independent jobs and measure the median.
 
 Cost model:
 
@@ -475,3 +475,46 @@ Prediction:
 5. **`apply_Minv` per iteration** stays roughly constant across `P`.
 
 The main claim is item 3: in this design, the replicated QR and triangular solves set a floor on strong scaling for small problems. If the fixed costs stay below 10% of total time at `n = 50,000`, `P = 32`, the floor is not a practical concern at this `d`.
+
+#### Result
+
+Data: `results/final/precond_scaling_carc_4359211.jsonl`, `…_4359213.jsonl`, `…_4359214.jsonl`. Hopper, node `hopper010` (Xeon Gold 6226R, 2 × 16 cores, 22.5 MB L3 per socket), with three independent jobs. Values are medians across the three jobs. Every configuration agrees across jobs within 4%, most within 1%. "Fixed" is QR plus `apply_Minv` as a share of total time. All 36 runs converged with identical iteration counts on every rank.
+
+`n = 50,000`:
+
+| P  | total (ms) | solve | setup | sketch | QR   | `apply_Minv` | fixed | speedup (total) | speedup (solve) |
+|----|------------|-------|-------|--------|------|--------------|-------|-----------------|-----------------|
+| 1  | 1756       | 1701  | 55    | 24.9   | 29.2 | 26.6         | 3%    | 1.00            | 1.00            |
+| 2  | 936        | 890   | 45    | 13.2   | 29.6 | 27.6         | 6%    | 1.88            | 1.91            |
+| 4  | 510        | 469   | 41    | 7.4    | 30.9 | 29.5         | 12%   | 3.44            | 3.63            |
+| 8  | 309        | 267   | 40    | 4.6    | 32.4 | 35.2         | 22%   | 5.68            | 6.37            |
+| 16 | 227        | 180   | 46    | 3.7    | 37.4 | 34.6         | 32%   | 7.74            | 9.43            |
+| 32 | 256        | 187   | 69    | 4.3    | 56.2 | 57.5         | 44%   | 6.85            | 9.09            |
+
+`n = 500,000`:
+
+| P  | total (ms) | sketch | QR   | `apply_Minv` | fixed | speedup (total) |
+|----|------------|--------|------|--------------|-------|-----------------|
+| 1  | 16728      | 242    | 30.2 | 29.2         | 0.4%  | 1.00            |
+| 2  | 8763       | 123    | 29.8 | 29.3         | 0.7%  | 1.91            |
+| 4  | 4495       | 64.2   | 30.6 | 36.4         | 1.5%  | 3.72            |
+| 8  | 2324       | 35.0   | 32.2 | 37.3         | 3.0%  | 7.20            |
+| 16 | 1450       | 27.8   | 37.5 | 36.9         | 5.1%  | 11.54           |
+| 32 | 1303       | 31.2   | 56.0 | 70.9         | 9.7%  | 12.84           |
+
+**1. Iterations: confirmed.** 58 at every `P` for `n = 50,000`. 57 or 58 depending on `P` for `n = 500,000`, identical across all three jobs. The ±1 variation is deterministic and comes from summation order, not noise.
+
+**2. Large problem below 5%: refuted.** The fixed share is 5.1% at `P = 16` and 9.7% at `P = 32`. The cost model assumed the replicated terms were constant in `P`. At `P = 32` both nearly doubled (items 4 and 5).
+
+**3. Small problem: floor confirmed, earlier levelling not resolved.** By `P = 32` the fixed costs are 44% of total time, above the predicted 25%. Total time is minimized at `P = 16` and increases by 13% at `P = 32`, so adding ranks makes the solver slower. However, solve-only speedup also peaks at `P = 16` (9.43, then 9.09), so this grid of `P` values cannot show that total time levels off at a lower `P`. After the peak, total time degrades faster (−11% vs −4% in speedup). Part of the fixed cost is inside the solve, since `apply_Minv` runs every iteration.
+
+**4. Setup components: partly confirmed.**
+- Sketch time falls as `1/P` up to `P = 8` (242 → 35 ms at `n = 500,000`), then stops falling and rises slightly at `P = 32`.
+- Setup `Allreduce` grows with `P` (0.7 → 9 ms) and stays below the QR: confirmed.
+- QR within +50%: refuted. It rises from 29 ms to 56 ms (+92%) at `P = 32`, the same at both problem sizes, as expected for a cost independent of `n`. The rise is gradual: +11% at `P = 8`, +28% at `P = 16`.
+
+**5. `apply_Minv` per iteration roughly constant: refuted at `P = 32`.** It goes from 0.46 to 0.60 ms through `P = 16`, then 0.99 ms at `P = 32` (`n = 500,000`: 0.51 → 1.24 ms).
+
+**Proposed explanation for 4 and 5 (not tested).** Both replicated terms jump when each socket goes from 8 to 16 ranks, independent of `n`. Each rank holds its own `R` (500 × 500 doubles = 2 MB): 8 copies per socket take 16 MB and fit in the 22.5 MB L3. 16 copies take 32 MB and do not, so at `P = 32` the triangular solves read `R` from DRAM. The QR's working matrix (1500 × 500 = 6 MB per rank) exceeds L3 at fewer ranks per socket, which fits its more gradual rise. This is consistent with the data but not demonstrated. Plain memory-bandwidth contention, as in the weak-scaling result, would also grow with ranks per socket.
+
+**Conclusion.** Replicating the QR and the triangular solves on every rank is cheap at low `P` but sets a floor on strong scaling. At `n = 50,000`, the best total time is at `P = 16`. At `n = 500,000`, the same costs reach 10% of total time by `P = 32` and are rising. The model's assumption that replicated work costs the same at any `P` fails when ranks share cache and memory bandwidth.
