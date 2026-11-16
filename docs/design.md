@@ -456,3 +456,22 @@ Interface:
         -> apply_Minv, timings {"sketch", "comm", "qr"}
 
 The serial and distributed implementations share three helpers: `sparse_sign_sketch` generates positions and signs, `sparse_sign_matrix` constructs the corresponding CSC matrix from global or local arrays, and `qr_preconditioner` constructs the inverse preconditioner from the completed sketch product. The serial function retains its existing signature, and the distributed implementation scatters the generated positions and signs across ranks. The refactored serial function produces bitwise-identical `M⁻¹r` for the same seed (checked for `ζ = 1` and `ζ = 2`), so all earlier results stay reproducible from the current code.
+
+### Prediction: strong scaling of distributed sketch-preconditioned CG
+
+Run: `scripts/precond_scaling_carc.sh`, Hopper, one node, P = 1, 2, 4, 8, 16, 32. `d = 500`, `cond = 1e6`, `λ = 0`, sparse sign sketch with `s = 2d`, `ζ = 1`, sketch seed fixed so `S` is identical for every `P`. Two problem sizes: `n = 50,000` and `n = 500,000`.
+
+Cost model:
+
+- Setup: local sketch `∝ n/P`, one `Allreduce` of `s·d` doubles, and a QR replicated on every rank that does not depend on `P`.
+- Per iteration: operator compute `∝ n d / P`, one `Allreduce` of `d` doubles, and `apply_Minv`, which is replicated and does not depend on `P`. On the desktop at `d = 200`, `apply_Minv` cost 11% of operator compute, not the 2% a flop count predicts, so per-call overhead is part of its fixed cost.
+
+Prediction:
+
+1. **Iterations.** The same at every `P` (within ±1, from summation order), and about 55–60 at both sizes, since `κ(M⁻¹A)` depends on `s/d`, not on `n`.
+2. **Large problem (`n = 500,000`).** Setup plus `apply_Minv` stay below 5% of total time at every `P`. Total-time scaling has the same shape as the unpreconditioned strong scaling, limited by memory bandwidth.
+3. **Small problem (`n = 50,000`).** The fixed costs grow as a fraction of total time with `P`. By `P = 32`, QR plus `apply_Minv` exceed 25% of total time, and speedup of total time levels off at a lower `P` than speedup of the solve alone.
+4. **Setup components.** Sketch time falls roughly as `1/P`. Setup `Allreduce` time grows with `P` but stays below the QR. QR time stays roughly constant. It may rise by up to about 50% at `P = 32`, because 32 ranks factor simultaneously and share cache and memory bandwidth.
+5. **`apply_Minv` per iteration** stays roughly constant across `P`.
+
+The main claim is item 3: in this design, the replicated QR and triangular solves set a floor on strong scaling for small problems. If the fixed costs stay below 10% of total time at `n = 50,000`, `P = 32`, the floor is not a practical concern at this `d`.
