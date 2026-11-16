@@ -1,6 +1,9 @@
 import numpy as np
 
 from mpi4py import MPI
+from mpi4py.util.dtlib import from_numpy_dtype
+
+from .precond import sparse_sign_matrix, qr_preconditioner
 
 def row_partition(n: int, comm) -> tuple[int, int]:
     """Return the [start, stop) row range owned by this MPI rank."""
@@ -32,28 +35,40 @@ def row_counts(n: int, size: int) -> tuple[np.ndarray, np.ndarray]:
     return counts, offsets
 
 def scatter_rows(A, comm, root=0):
-    """Distribute row blocks of A from root. A is ignored on non-root ranks."""
+    """Distribute row blocks of a C-contiguous NumPy array."""
     rank = comm.Get_rank()
 
     if rank == root:
-        assert A.flags['C_CONTIGUOUS'] and A.dtype == np.float64
-        shape = A.shape
+        assert A.flags["C_CONTIGUOUS"]
+        meta = (A.shape, A.dtype)
     else:
-        shape = None
+        meta = None
 
-    shape = comm.bcast(shape, root=root)
+    # Broadcast metadata so every rank knows the shape and dtype.
+    shape, dtype = comm.bcast(meta, root=root)
+
+    mpi_dtype = from_numpy_dtype(dtype)
+
+    # Determine the receiving rank's row range.
     start, stop = row_partition(shape[0], comm)
+
     local_shape = (stop - start,) + shape[1:]
-    row_elems = int(np.prod(shape[1:]))
+    local = np.empty(local_shape, dtype=dtype)
 
     if rank == root:
         counts, offsets = row_counts(shape[0], comm.Get_size())
+
+        # Scatterv counts elements, not rows.
+        row_elems = int(np.prod(shape[1:]))
+
         elem_counts = counts * row_elems
         elem_offsets = offsets * row_elems
 
-    sendbuf = [A, elem_counts, elem_offsets, MPI.DOUBLE] if rank == root else None
-    local = np.empty(local_shape)
-    comm.Scatterv(sendbuf, local, root=root)
+        sendbuf = [A, elem_counts, elem_offsets, mpi_dtype]
+    else:
+        sendbuf = None
+
+    comm.Scatterv(sendbuf, [local, mpi_dtype], root=root)
 
     return local
 
@@ -111,3 +126,51 @@ def assemble_rhs(X_local, y_local, comm):
     b = np.empty_like(partial)
     comm.Allreduce(partial, b, op=MPI.SUM)
     return b
+
+def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm):
+    """
+    Construct a distributed sparse-sign ridge preconditioner.
+
+    The sketch is supplied externally and is independent of rank count.
+
+    Returns (apply_Minv, timings).
+    """
+    n_local, d = X_local.shape
+
+    if s < d:
+        raise ValueError("s must be at least d")
+
+    if positions_local.shape != signs_local.shape:
+        raise ValueError("positions and signs must have matching shapes")
+
+    if positions_local.shape[0] != n_local:
+        raise ValueError("sketch columns must match local X rows")
+
+    # Local sketch multiplication
+    t0 = MPI.Wtime()
+
+    S_local = sparse_sign_matrix(positions_local, signs_local, s)
+
+    partial = np.ascontiguousarray(S_local @ X_local)
+
+    sketch_time = MPI.Wtime() - t0
+
+    # Global sketch assembly
+    SX = np.empty_like(partial)
+
+    t0 = MPI.Wtime()
+
+    comm.Allreduce(partial, SX, op=MPI.SUM)
+
+    comm_time = MPI.Wtime() - t0
+
+    # Replicated QR factorization
+    t0 = MPI.Wtime()
+
+    apply_Minv = qr_preconditioner(SX, lam)
+
+    qr_time = MPI.Wtime() - t0
+
+    timings = {"sketch": sketch_time, "comm": comm_time, "qr": qr_time}
+
+    return apply_Minv, timings
