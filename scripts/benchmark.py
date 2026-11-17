@@ -51,11 +51,15 @@ parser.add_argument("--solver", choices=["cg", "pipelined"], default="cg")
 parser.add_argument("--precond", choices=["none", "sparse"], default="none")
 parser.add_argument("--s_factor", type=int, default=2)
 parser.add_argument("--zeta", type=int, default=1)
+parser.add_argument("--qr", choices=["replicated", "root"], default="replicated")
 
 args = parser.parse_args()
 
 if args.precond != "none" and args.solver == "pipelined":
     parser.error("preconditioning is only implemented for --solver cg")
+
+if args.qr == "root" and args.precond == "none":
+    parser.error("--qr root requires --precond sparse")
 
 if args.reps < 1 or args.warmup < 0:
     parser.error("--reps must be positive and --warmup non-negative")
@@ -104,9 +108,9 @@ b = assemble_rhs(X_local, y_local, comm)
 # Preconditioner setup and solve
 def setup():
     if args.precond == "none":
-        return None, {"sketch": 0.0, "comm": 0.0, "qr": 0.0}
+        return None, {"sketch": 0.0, "comm": 0.0, "qr": 0.0, "bcast": 0.0}
 
-    return make_distributed_sketch_preconditioner(X_local, args.lam, s, positions_local, signs_local, comm)
+    return make_distributed_sketch_preconditioner(X_local, args.lam, s, positions_local, signs_local, comm, qr=args.qr)
 
 
 def timed(f):
@@ -179,6 +183,7 @@ for _ in range(args.reps):
     sketches = comm.gather(setup_timings["sketch"], root=0)
     setup_comms = comm.gather(setup_timings["comm"], root=0)
     qrs = comm.gather(setup_timings["qr"], root=0)
+    bcasts = comm.gather(setup_timings["bcast"], root=0)
 
     iteration_counts = comm.gather(iters, root=0)
     convergence_flags = comm.gather(converged, root=0)
@@ -197,6 +202,7 @@ for _ in range(args.reps):
             "sketch": max(sketches),
             "setup_comm": max(setup_comms),
             "qr": max(qrs),
+            "bcast": max(bcasts),
             "compute_per_rank": comps,
             "comm_per_rank": comms,
             "iters": max(iteration_counts),
@@ -220,6 +226,7 @@ if rank == 0:
         "precond": args.precond,
         "s": s,
         "zeta": args.zeta if args.precond == "sparse" else None,
+        "qr_mode": args.qr if args.precond == "sparse" else None,
 
         # Solve-time metrics (existing meaning preserved)
         "wall": median("wall"),
@@ -232,6 +239,7 @@ if rank == 0:
         "sketch": median("sketch"),
         "setup_comm": median("setup_comm"),
         "qr": median("qr"),
+        "bcast": median("bcast"),
         "precond_time": median("precond_time"),
 
         "compute_per_rank": np.median([r["compute_per_rank"] for r in records], axis=0).tolist(),
