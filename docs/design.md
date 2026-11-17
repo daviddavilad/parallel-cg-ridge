@@ -518,3 +518,26 @@ Data: `results/final/precond_scaling_carc_4359211.jsonl`, `…_4359213.jsonl`, `
 **Proposed explanation for 4 and 5 (not tested).** Both replicated terms jump when each socket goes from 8 to 16 ranks, independent of `n`. Each rank holds its own `R` (500 × 500 doubles = 2 MB): 8 copies per socket take 16 MB and fit in the 22.5 MB L3. 16 copies take 32 MB and do not, so at `P = 32` the triangular solves read `R` from DRAM. The QR's working matrix (1500 × 500 = 6 MB per rank) exceeds L3 at fewer ranks per socket, which fits its more gradual rise. This is consistent with the data but not demonstrated. Plain memory-bandwidth contention, as in the weak-scaling result, would also grow with ranks per socket.
 
 **Conclusion.** Replicating the QR and the triangular solves on every rank is cheap at low `P` but sets a floor on strong scaling. At `n = 50,000`, the best total time is at `P = 16`. At `n = 500,000`, the same costs reach 10% of total time by `P = 32` and are rising. The model's assumption that replicated work costs the same at any `P` fails when ranks share cache and memory bandwidth.
+
+### Prediction: root-QR mode (fix A) and the cache test
+
+The previous experiment found that the QR and `apply_Minv`, both replicated on every rank, nearly double in cost at `P = 32`, and that at `n = 50,000` total time is lowest at `P = 16`. Fix A removes the replicated QR: `SX` is assembled with a `Reduce` to rank 0, which computes the QR and broadcasts `R` (`d²` doubles, 2 MB). Every rank still keeps its own copy of `R` for the triangular solves.
+
+Run: `scripts/fixA_carc.sh`, Hopper, one node, three independent jobs. `d = 500`, `cond = 1e6`, `λ = 0`, `s = 2d`, `ζ = 1`, the same fixed sketch as before. Both QR modes run back to back at each `P` within the same job, at `n = 50,000` and `n = 500,000`. A separate cache-test arm runs `d = 300`, `n = 50,000`, replicated mode.
+
+Refinement of the cache hypothesis. Each CG iteration streams the local block of `X` through the cache (about 100 MB per socket at these sizes), which evicts `R` from L3 between iterations at every `P`. The reuse that depends on L3 capacity is within a single `apply_Minv`: the first triangular solve loads `R` and the second reuses it. With 16 ranks per socket, 16 copies of `R` take 32 MB at `d = 500`, more than the 22.5 MB L3, but 11.5 MB at `d = 300`, which fits.
+
+Prediction (`n = 50,000` unless stated):
+
+1. **Iterations.** Identical in both modes at every `P`.
+2. **QR in root mode.** 29–31 ms at every `P`, within 10% of the `P = 1` value. The +92% rise at `P = 32` disappears.
+3. **Setup at `P = 32`.** About 40–48 ms in root mode, against about 69 ms replicated: sketch (~4 ms), `Reduce` (≤ 9 ms), QR (~30 ms), and broadcast (a few ms).
+4. **`apply_Minv` is unaffected by the mode.** Within 10% between modes at every `P`, since each rank still holds its own `R`.
+5. **Root mode does not remove the floor.** Total time at `P = 32` remains higher than at `P = 16`: about 230 ms against about 220 ms. The predicted gap (~5%) is close to the run-to-run spread (≤ 4%), so the claim counts as confirmed only if `P = 32` is slower than `P = 16` in all three jobs.
+6. **`n = 500,000`.** The QR saving is about 2% of total time, so the two modes agree within 3% at every `P`.
+7. **Cache test (`d = 300`, replicated).** `apply_Minv` time per iteration rises by at most 25% from `P = 16` to `P = 32`, against +65% at `d = 500`.
+
+Falsification:
+- Items 2–3: if root-mode QR still rises by more than 25% at `P = 32`, the rise comes from something other than concurrent factorization, such as the sketch or `Reduce` traffic overlapping with it.
+- Item 5: if `P = 32` is faster than `P = 16` in root mode, the QR contention was the main cause of the floor, and fix B (node-shared `R`) is less important than expected.
+- Item 7: if the rise at `d = 300` is 50% or more, the jump is memory-bandwidth contention rather than L3 capacity, and fix B, which targets capacity, should not help much.
