@@ -519,11 +519,11 @@ Data: `results/final/precond_scaling_carc_4359211.jsonl`, `…_4359213.jsonl`, `
 
 **Conclusion.** Replicating the QR and the triangular solves on every rank is cheap at low `P` but sets a floor on strong scaling. At `n = 50,000`, the best total time is at `P = 16`. At `n = 500,000`, the same costs reach 10% of total time by `P = 32` and are rising. The model's assumption that replicated work costs the same at any `P` fails when ranks share cache and memory bandwidth.
 
-### Prediction: root-QR mode (fix A) and the cache test
+### Prediction: root-QR mode and the cache test
 
-The previous experiment found that the QR and `apply_Minv`, both replicated on every rank, nearly double in cost at `P = 32`, and that at `n = 50,000` total time is lowest at `P = 16`. Fix A removes the replicated QR: `SX` is assembled with a `Reduce` to rank 0, which computes the QR and broadcasts `R` (`d²` doubles, 2 MB). Every rank still keeps its own copy of `R` for the triangular solves.
+The previous experiment found that the QR and `apply_Minv`, both replicated on every rank, nearly double in cost at `P = 32`, and that at `n = 50,000` total time is lowest at `P = 16`. Root-QR mode removes the replicated QR: `SX` is assembled with a `Reduce` to rank 0, which computes the QR and broadcasts `R` (`d²` doubles, 2 MB). Every rank still keeps its own copy of `R` for the triangular solves.
 
-Run: `scripts/fixA_carc.sh`, Hopper, one node, three independent jobs. `d = 500`, `cond = 1e6`, `λ = 0`, `s = 2d`, `ζ = 1`, the same fixed sketch as before. Both QR modes run back to back at each `P` within the same job, at `n = 50,000` and `n = 500,000`. A separate cache-test arm runs `d = 300`, `n = 50,000`, replicated mode.
+Run: `scripts/precond_qr_mode_carc.sh`, Hopper, one node, three independent jobs. `d = 500`, `cond = 1e6`, `λ = 0`, `s = 2d`, `ζ = 1`, the same fixed sketch as before. Both QR modes run back to back at each `P` within the same job, at `n = 50,000` and `n = 500,000`. A separate cache-test arm runs `d = 300`, `n = 50,000`, replicated mode.
 
 Refinement of the cache hypothesis. Each CG iteration streams the local block of `X` through the cache (about 100 MB per socket at these sizes), which evicts `R` from L3 between iterations at every `P`. The reuse that depends on L3 capacity is within a single `apply_Minv`: the first triangular solve loads `R` and the second reuses it. With 16 ranks per socket, 16 copies of `R` take 32 MB at `d = 500`, more than the 22.5 MB L3, but 11.5 MB at `d = 300`, which fits.
 
@@ -539,5 +539,47 @@ Prediction (`n = 50,000` unless stated):
 
 Falsification:
 - Items 2–3: if root-mode QR still rises by more than 25% at `P = 32`, the rise comes from something other than concurrent factorization, such as the sketch or `Reduce` traffic overlapping with it.
-- Item 5: if `P = 32` is faster than `P = 16` in root mode, the QR contention was the main cause of the floor, and fix B (node-shared `R`) is less important than expected.
-- Item 7: if the rise at `d = 300` is 50% or more, the jump is memory-bandwidth contention rather than L3 capacity, and fix B, which targets capacity, should not help much.
+- Item 5: if `P = 32` is faster than `P = 16` in root mode, the QR contention was the main cause of the floor, and a node-shared `R` is less important than expected.
+- Item 7: if the rise at `d = 300` is 50% or more, the jump is memory-bandwidth contention rather than L3 capacity, and a node-shared `R`, which targets capacity, should not help much.
+
+#### Result
+
+Data: `results/final/precond_qr_mode_carc_4359420.jsonl`, `…_4359421.jsonl`, `…_4359422.jsonl`. Hopper, nodes `hopper008` (jobs 4359420 and 4359422) and `hopper010` (job 4359421). Same hardware as the previous experiment. Both QR modes ran back to back at each `P` within each job. Values are medians across the three jobs, which agree within about 2% in nearly every configuration. All 90 runs converged with identical iteration counts on every rank.
+
+`d = 500`, `n = 50,000` (times in ms):
+
+| P  | total, replicated | total, root | QR, replicated | QR, root | setup, replicated | setup, root | `apply_Minv` per iteration, root |
+|----|-------------------|-------------|----------------|----------|-------------------|-------------|----------------------------------|
+| 1  | 1790              | 1790        | 29.2           | 29.1     | 55.0              | 55.3        | 0.45                             |
+| 2  | 933               | 930         | 29.4           | 29.4     | 44.9              | 46.4        | 0.50                             |
+| 4  | 509               | 507         | 30.8           | 28.9     | 41.3              | 42.8        | 0.57                             |
+| 8  | 308               | 309         | 32.4           | 28.7     | 40.4              | 42.6        | 0.61                             |
+| 16 | 225               | 227         | 37.4           | 28.7     | 45.7              | 44.3        | 0.61                             |
+| 32 | 258               | 246         | 56.0           | 28.7     | 69.1              | 49.9        | 1.12                             |
+
+Cache test, `d = 300`, `n = 50,000`, replicated:
+
+| P  | total (ms) | QR (ms) | `apply_Minv` per iteration (ms) |
+|----|------------|---------|---------------------------------|
+| 1  | 1107       | 9.5     | 0.223                           |
+| 8  | 177        | 10.3    | 0.323                           |
+| 16 | 117        | 11.1    | 0.340                           |
+| 32 | 109        | 14.0    | 0.384                           |
+
+**1. Iterations: confirmed.** Identical in both modes at every `P` and both sizes.
+
+**2. Root-mode QR: confirmed.** 28.4–30.2 ms at every `P` and both sizes, within 10% of the `P = 1` value. The +92% rise disappears, so it came from 32 ranks factoring at the same time.
+
+**3. Setup at `P = 32`: refuted by a small amount.** 49.9 ms against a predicted 40–48 ms (69.1 ms in replicated mode). The `Reduce` took 13.6 ms against a predicted ≤ 9 ms, which is slower than the `Allreduce` it replaced (9.0 ms). A possible explanation, not tested: for a 4 MB message, Open MPI's `Reduce` concentrates the summation at the root, while `Allreduce` divides it across ranks.
+
+**4. `apply_Minv` unaffected by the mode: essentially confirmed.** 22 of 24 `(n, P)` cells agree within 10%. The two exceptions (+11.5% and +11.0%) are both at `n = 50,000`. At `n = 500,000` the differences change sign with `P`. A small positive lean at `n = 50,000` (5 of 6 cells) is not explained.
+
+**5. Root mode does not remove the floor: confirmed.** Total time at `P = 32` is higher than at `P = 16` in all three jobs (249.5 vs 231.7, 245.1 vs 222.6, 246.4 vs 227.1 ms). The gap is larger than predicted: 246 vs 227 ms (+8.5%), against a predicted 230 vs 220 ms. Root mode reduces total time at `P = 32` by 4.5% and has no effect at `P = 16`.
+
+**6. `n = 500,000`: confirmed.** The two modes agree within 1.6% at every `P`.
+
+**7. Cache test: confirmed.** At `d = 300`, `apply_Minv` per iteration rises 13% from `P = 16` to `P = 32`, against 69% at `d = 500` in the same jobs. However, a smaller `d` also reduces the `X` data each rank streams per iteration (about 60 MB per socket against 100 MB), so this comparison reduces memory-bandwidth pressure as well as `R`'s cache footprint. Thus, there might be a confound variable in between.
+
+Supporting observation: in the same `d = 300` runs, the QR still rises (+26% from `P = 16` to `P = 32`). Its working matrix (900 × 300, 2.2 MB per rank, 35 MB for 16 ranks) does not fit in L3, while 16 copies of `R` (11.5 MB) do. The replicated term that exceeds L3 grows, and the one that fits barely changes. This favors the capacity explanation but does not prove it.
+
+**Conclusion.** Root-QR mode removes the QR contention as intended but does not remove the floor. What remains is `apply_Minv`, whose behaviour is consistent with L3 capacity. A direct test requires changing only where `R` lives, i.e., one copy per node in shared memory.
