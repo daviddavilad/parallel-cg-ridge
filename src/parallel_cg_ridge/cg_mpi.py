@@ -132,7 +132,25 @@ def assemble_rhs(X_local, y_local, comm):
     comm.Allreduce(partial, b, op=MPI.SUM)
     return b
 
-def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm, qr="replicated"):
+def allocate_node_shared(shape, node_comm):
+    """Allocate one float64 shared array per node."""
+    dtype = np.dtype(np.float64)
+    itemsize = dtype.itemsize
+
+    node_rank = node_comm.Get_rank()
+    nbytes = int(np.prod(shape)) * itemsize if node_rank == 0 else 0
+
+    win = MPI.Win.Allocate_shared(nbytes, itemsize, comm=node_comm)
+
+    win.Lock_all(MPI.MODE_NOCHECK)
+
+    buf, _ = win.Shared_query(0)
+
+    R_shared = np.ndarray(shape=shape, dtype=dtype, buffer=buf)
+
+    return R_shared, win
+
+def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm, qr="replicated", R_shared=None, node_comm=None, leader_comm=None, shared_win=None):
     """
     Construct a distributed sparse-sign ridge preconditioner.
 
@@ -147,8 +165,18 @@ def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, sig
     if s < d:
         raise ValueError("s must be at least d")
 
-    if qr not in ("replicated", "root"):
-        raise ValueError("qr must be 'replicated' or 'root'")
+    if qr not in ("replicated", "root", "shared"):
+        raise ValueError("qr must be 'replicated', 'root', or 'shared'")
+
+    if qr == "shared":
+        if R_shared is None or node_comm is None or shared_win is None:
+            raise ValueError("shared mode requires a shared buffer, window and node communicator")
+        if R_shared.shape != (d, d) or R_shared.dtype != np.float64:
+            raise ValueError("R_shared must be a float64 d x d array")
+        if node_comm.Get_rank() == 0 and leader_comm is None:
+            raise ValueError("node leaders require leader_comm")
+        if rank == 0 and node_comm.Get_rank() != 0:
+            raise ValueError("global rank 0 must be its node's leader")
 
     if positions_local.shape != signs_local.shape:
         raise ValueError("positions and signs must have matching shapes")
@@ -186,7 +214,7 @@ def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, sig
         apply_Minv = qr_preconditioner(SX, lam)
         qr_time = MPI.Wtime() - t0
 
-    else:
+    elif qr == "root":
         if rank == 0:
             t0 = MPI.Wtime()
             R = np.ascontiguousarray(sketch_qr_factor(SX, lam))
@@ -199,6 +227,35 @@ def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, sig
         bcast_time = MPI.Wtime() - t0
 
         apply_Minv = triangular_preconditioner(R)
+
+    else:
+        # Only global rank 0 factorizes.
+        if rank == 0:
+            t0 = MPI.Wtime()
+
+            # Safe to overwrite R_shared: rank 0 reaches this point only after its
+            # Reduce has completed, which requires every rank to have entered setup,
+            # i.e. finished any previous solve that reads R_shared.
+            R_shared[:] = sketch_qr_factor(SX, lam)
+            
+            qr_time = MPI.Wtime() - t0
+
+        # Only node leaders communicate the factor.
+        if node_comm.Get_rank() == 0:
+            t0 = MPI.Wtime()
+            leader_comm.Bcast(R_shared, root=0)
+            bcast_time = MPI.Wtime() - t0
+
+            # Publish the leader's writes.
+            shared_win.Sync()
+
+        # Wait until each node's leader has received R.
+        node_comm.Barrier()
+
+        # Synchronize the shared view before reading it.
+        shared_win.Sync()
+
+        apply_Minv = triangular_preconditioner(R_shared)
 
     timings = {"sketch": sketch_time, "comm": comm_time, "qr": qr_time, "bcast": bcast_time}
 

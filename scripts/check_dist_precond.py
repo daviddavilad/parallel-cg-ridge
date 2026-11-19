@@ -4,6 +4,7 @@ from mpi4py import MPI
 from parallel_cg_ridge.data import make_ridge_problem
 from parallel_cg_ridge.cg_mpi import (
     scatter_rows,
+    allocate_node_shared,
     make_distributed_sketch_preconditioner,
 )
 from parallel_cg_ridge.precond import (
@@ -31,6 +32,22 @@ X_local = scatter_rows(X, comm)
 # All ranks independently generate the same test vector.
 r = np.random.default_rng(99).standard_normal(d)
 
+# Real node grouping.
+real_node_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+
+# Simulated nodes: ranks 0-1, 2-3, etc.
+# Valid only when all processes are on one physical machine.
+fake_node_comm = comm.Split(rank // 2, key=rank)
+
+shared_cases = {}
+
+for label, nc in (("shared-real", real_node_comm), ("shared-fake", fake_node_comm)):
+    leader_comm = comm.Split(0 if nc.Get_rank() == 0 else MPI.UNDEFINED, key=rank)
+
+    R_shared, win = allocate_node_shared((d, d), nc)
+
+    shared_cases[label] = (nc, leader_comm, R_shared, win)
+
 for zeta in (1, 2):
 
     # Rank 0 generates the global sparse sketch.
@@ -45,10 +62,23 @@ for zeta in (1, 2):
     signs_local = scatter_rows(signs, comm)
 
     for lam in (0.0, 1e-3):
-        for qr_mode in ("replicated", "root"):
+        for qr_mode in ("replicated", "root", "shared-real", "shared-fake"):
+
+            if qr_mode.startswith("shared"):
+                nc, lc, R_shared, win = shared_cases[qr_mode]
+
+                kwargs = {
+                    "qr": "shared",
+                    "R_shared": R_shared,
+                    "node_comm": nc,
+                    "leader_comm": lc,
+                    "shared_win": win,
+                }
+            else:
+                kwargs = {"qr": qr_mode}
 
             # Construct the distributed preconditioner.
-            apply_Minv, _ = make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm, qr=qr_mode)
+            apply_Minv, _ = make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, signs_local, comm, **kwargs)
 
             u = apply_Minv(r)
 
@@ -94,3 +124,12 @@ for zeta in (1, 2):
                     f"PASS (rel_err={rel_err:.3e}, ranks bitwise equal)",
                     flush=True,
                 )
+
+for nc, lc, R_shared, win in shared_cases.values():
+    win.Unlock_all()
+    win.Free()
+
+    if lc != MPI.COMM_NULL:
+        lc.Free()
+
+    nc.Free()
