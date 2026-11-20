@@ -583,3 +583,23 @@ Cache test, `d = 300`, `n = 50,000`, replicated:
 Supporting observation: in the same `d = 300` runs, the QR still rises (+26% from `P = 16` to `P = 32`). Its working matrix (900 × 300, 2.2 MB per rank, 35 MB for 16 ranks) does not fit in L3, while 16 copies of `R` (11.5 MB) do. The replicated term that exceeds L3 grows, and the one that fits barely changes. This favors the capacity explanation but does not prove it.
 
 **Conclusion.** Root-QR mode removes the QR contention as intended but does not remove the floor. What remains is `apply_Minv`, whose behaviour is consistent with L3 capacity. A direct test requires changing only where `R` lives, i.e., one copy per node in shared memory.
+
+### Prediction: node-shared `R`
+
+Root-QR mode removed the QR contention but not the floor at `P = 32`. The remaining cost is `apply_Minv`, which nearly doubles per iteration from `P = 16` to `P = 32` (about 0.6 to 1.0–1.1 ms). The `d = 300` cache test was consistent with an L3 capacity limit but could not rule out memory-bandwidth contention. Node-shared mode changes only where `R` lives: rank 0 factors as in root mode, node leaders broadcast `R` into one MPI shared-memory window per node, and every rank on the node reads that single copy. On one Hopper node, 16 ranks per socket then share one 2 MB copy instead of 16 private copies (32 MB, more than the 22.5 MB L3).
+
+Run: `scripts/precond_shared_r_carc.sh`, Hopper, one node, three independent jobs. `n = 50,000`, `d = 500`, `cond = 1e6`, `λ = 0`, `s = 2d`, `ζ = 1`, the same fixed sketch as before. The three modes (`replicated`, `root`, `shared`) run back to back at each `P = 1, 2, 4, 8, 16, 32`. Per-rank `apply_Minv` times are recorded.
+
+Prediction:
+
+1. **Iterations.** Identical in all three modes at every `P`.
+2. **Setup.** Shared mode matches root mode within 10% at every `P` (about 50 ms at `P = 32`). On one node there is a single leader, so the leaders' `Bcast` is trivial, and the non-leaders' wait moves from `bcast` to `node_sync`.
+3. **`apply_Minv` at `P = 32` (main claim).** At most 0.70 ms per iteration in shared mode, against about 1.0–1.1 ms in the other two modes, i.e. close to the `P = 16` value.
+4. **`apply_Minv` at `P ≤ 16`.** Shared mode is no slower than root mode by more than 10%.
+5. **Total time at `P = 32`.** Shared mode is at least 8% faster than both other modes (about 220 ms, against about 246 ms root and 258 ms replicated).
+6. **The floor.** Shared mode at `P = 32` is faster than shared mode at `P = 16`. The predicted gap is only a few percent, about the size of the run-to-run spread, so this counts as confirmed only if it holds in all three jobs.
+
+Falsification:
+- If `apply_Minv` at `P = 32` stays above 0.85 ms per iteration in shared mode (less than about 20% improvement), the capacity explanation is not supported. The per-rank times then separate the alternatives: if ranks on socket 1 (odd CPUs) are slow and ranks on socket 0 are fast, the gain is being lost to cross-socket reads, and one copy per socket is the next step. If all ranks are slow, the limit is memory bandwidth, not L3 capacity.
+- If setup in shared mode is more than 15% slower than root mode, the window synchronization costs more than expected.
+- If item 5 holds but item 6 does not, sharing `R` helps, but the remaining replicated work (setup and the solves themselves) still sets a floor near `P = 16` at this size.
