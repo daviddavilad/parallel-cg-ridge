@@ -156,6 +156,7 @@ def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, sig
 
     qr="replicated": Allreduce SX, then QR on every rank.
     qr="root": Reduce SX, QR on rank 0, broadcast R.
+    qr="shared": Reduce SX, QR on rank 0, leaders Bcast R into one shared copy per node.
 
     Returns (apply_Minv, timings).
     """
@@ -208,6 +209,7 @@ def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, sig
     # QR factorization
     qr_time = 0.0
     bcast_time = 0.0
+    node_sync_time = 0.0
 
     if qr == "replicated":
         t0 = MPI.Wtime()
@@ -249,14 +251,16 @@ def make_distributed_sketch_preconditioner(X_local, lam, s, positions_local, sig
             # Publish the leader's writes.
             shared_win.Sync()
 
-        # Wait until each node's leader has received R.
+        # Wait until each node's leader has received R, then synchronize
+        # the shared view before reading it. Non-leaders wait here for
+        # rank 0's QR and the leaders' Bcast.
+        t0 = MPI.Wtime()
         node_comm.Barrier()
-
-        # Synchronize the shared view before reading it.
         shared_win.Sync()
+        node_sync_time = MPI.Wtime() - t0
 
         apply_Minv = triangular_preconditioner(R_shared)
 
-    timings = {"sketch": sketch_time, "comm": comm_time, "qr": qr_time, "bcast": bcast_time}
+    timings = {"sketch": sketch_time, "comm": comm_time, "qr": qr_time, "bcast": bcast_time, "node_sync": node_sync_time}
 
     return apply_Minv, timings

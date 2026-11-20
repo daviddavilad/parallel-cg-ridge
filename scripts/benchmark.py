@@ -20,6 +20,7 @@ from parallel_cg_ridge.cg_mpi import (
     make_split_ridge_operator,
     scatter_rows,
     make_distributed_sketch_preconditioner,
+    allocate_node_shared,
 )
 from parallel_cg_ridge.data import make_ridge_problem
 from parallel_cg_ridge.pipelined import pipelined_cg
@@ -51,15 +52,15 @@ parser.add_argument("--solver", choices=["cg", "pipelined"], default="cg")
 parser.add_argument("--precond", choices=["none", "sparse"], default="none")
 parser.add_argument("--s_factor", type=int, default=2)
 parser.add_argument("--zeta", type=int, default=1)
-parser.add_argument("--qr", choices=["replicated", "root"], default="replicated")
+parser.add_argument("--qr", choices=["replicated", "root", "shared"], default="replicated")
 
 args = parser.parse_args()
 
 if args.precond != "none" and args.solver == "pipelined":
     parser.error("preconditioning is only implemented for --solver cg")
 
-if args.qr == "root" and args.precond == "none":
-    parser.error("--qr root requires --precond sparse")
+if args.qr != "replicated" and args.precond == "none":
+    parser.error("--qr root/shared requires --precond sparse")
 
 if args.reps < 1 or args.warmup < 0:
     parser.error("--reps must be positive and --warmup non-negative")
@@ -105,12 +106,37 @@ else:
 
 b = assemble_rhs(X_local, y_local, comm)
 
+# One-time shared-memory allocation
+leader_comm = MPI.COMM_NULL
+R_shared = None
+win = None
+shared_alloc = 0.0
+
+if args.qr == "shared":
+    leader_comm = comm.Split(0 if local_rank == 0 else MPI.UNDEFINED, key=rank)
+
+    comm.Barrier()
+
+    t0 = MPI.Wtime()
+    R_shared, win = allocate_node_shared((args.d, args.d), node_comm)
+    alloc_time = MPI.Wtime() - t0
+
+    alloc_times = comm.gather(alloc_time, root=0)
+
+    if rank == 0:
+        shared_alloc = max(alloc_times)
+
 # Preconditioner setup and solve
 def setup():
     if args.precond == "none":
-        return None, {"sketch": 0.0, "comm": 0.0, "qr": 0.0, "bcast": 0.0}
+        return None, {"sketch": 0.0, "comm": 0.0, "qr": 0.0, "bcast": 0.0, "node_sync": 0.0}
 
-    return make_distributed_sketch_preconditioner(X_local, args.lam, s, positions_local, signs_local, comm, qr=args.qr)
+    kwargs = {"qr": args.qr}
+
+    if args.qr == "shared":
+        kwargs.update({"R_shared": R_shared, "node_comm": node_comm, "leader_comm": leader_comm, "shared_win": win})
+
+    return make_distributed_sketch_preconditioner(X_local, args.lam, s, positions_local, signs_local, comm, **kwargs)
 
 
 def timed(f):
@@ -184,6 +210,7 @@ for _ in range(args.reps):
     setup_comms = comm.gather(setup_timings["comm"], root=0)
     qrs = comm.gather(setup_timings["qr"], root=0)
     bcasts = comm.gather(setup_timings["bcast"], root=0)
+    node_syncs = comm.gather(setup_timings["node_sync"], root=0)
 
     iteration_counts = comm.gather(iters, root=0)
     convergence_flags = comm.gather(converged, root=0)
@@ -203,6 +230,7 @@ for _ in range(args.reps):
             "setup_comm": max(setup_comms),
             "qr": max(qrs),
             "bcast": max(bcasts),
+            "node_sync": max(node_syncs),
             "compute_per_rank": comps,
             "comm_per_rank": comms,
             "iters": max(iteration_counts),
@@ -227,6 +255,7 @@ if rank == 0:
         "s": s,
         "zeta": args.zeta if args.precond == "sparse" else None,
         "qr_mode": args.qr if args.precond == "sparse" else None,
+        "shared_alloc": float(shared_alloc),
 
         # Solve-time metrics (existing meaning preserved)
         "wall": median("wall"),
@@ -240,6 +269,7 @@ if rank == 0:
         "setup_comm": median("setup_comm"),
         "qr": median("qr"),
         "bcast": median("bcast"),
+        "node_sync": median("node_sync"),
         "precond_time": median("precond_time"),
 
         "compute_per_rank": np.median([r["compute_per_rank"] for r in records], axis=0).tolist(),
@@ -252,3 +282,12 @@ if rank == 0:
     }
 
     print(json.dumps(result))
+
+if win is not None:
+    win.Unlock_all()
+    win.Free()
+
+if leader_comm != MPI.COMM_NULL:
+    leader_comm.Free()
+
+node_comm.Free()
