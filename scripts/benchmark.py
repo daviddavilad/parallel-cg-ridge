@@ -233,6 +233,7 @@ for _ in range(args.reps):
             "node_sync": max(node_syncs),
             "compute_per_rank": comps,
             "comm_per_rank": comms,
+            "precond_per_rank": precond_times,
             "iters": max(iteration_counts),
             "converged": all(convergence_flags),
             "ranks_agree": len(set(iteration_counts)) == 1,
@@ -274,6 +275,7 @@ if rank == 0:
 
         "compute_per_rank": np.median([r["compute_per_rank"] for r in records], axis=0).tolist(),
         "comm_per_rank": np.median([r["comm_per_rank"] for r in records], axis=0).tolist(),
+        "precond_per_rank": np.median([r["precond_per_rank"] for r in records], axis=0).tolist(),
 
         "iters": records[0]["iters"],
         "converged": all(r["converged"] for r in records),
